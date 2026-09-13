@@ -13,9 +13,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -24,28 +24,43 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.oopnv70.uilab.location.LocateUiState
+import com.oopnv70.uilab.location.LocationPermissionState
 import com.oopnv70.uilab.ui.components.FloatingPillNavigationBar
 import com.oopnv70.uilab.ui.components.NavItem
 import com.oopnv70.uilab.ui.weather.CitiesPage
 import com.oopnv70.uilab.ui.weather.CityItem
+import com.oopnv70.uilab.ui.weather.CurrentWeather
 import com.oopnv70.uilab.ui.weather.DailyPage
+import com.oopnv70.uilab.ui.weather.DailyPoint
 import com.oopnv70.uilab.ui.weather.DynamicIslandCapsule
 import com.oopnv70.uilab.ui.weather.HourlyPage
-import com.oopnv70.uilab.ui.weather.MockWeather
+import com.oopnv70.uilab.ui.weather.HourlyPoint
 import com.oopnv70.uilab.ui.weather.OverviewPage
+import com.oopnv70.uilab.ui.weather.SavedCity
+import com.oopnv70.uilab.ui.weather.SkyCondition
 import com.oopnv70.uilab.ui.weather.WeatherGroup
+import com.oopnv70.uilab.ui.weather.WeatherUiState
+import com.oopnv70.uilab.ui.weather.WeatherViewModel
 import com.oopnv70.uilab.ui.weather.cloudIcon
+import com.oopnv70.uilab.ui.weather.observedTimeText
 import com.oopnv70.uilab.ui.weather.pressureIcon
 import com.oopnv70.uilab.ui.weather.sunIcon
 import com.oopnv70.uilab.ui.weather.sunriseIcon
-import com.oopnv70.uilab.location.LocateUiState
-import com.oopnv70.uilab.location.LocationPermissionState
-import com.oopnv70.uilab.location.cityDisplayName
-import androidx.compose.ui.graphics.Color
+import com.oopnv70.uilab.ui.weather.toCurrentWeather
+import com.oopnv70.uilab.ui.weather.toDailyPoints
+import com.oopnv70.uilab.ui.weather.toHourlyPoints
+import com.oopnv70.uilab.ui.weather.toMetrics
+import com.oopnv70.uilab.ui.weather.toSkyCondition
 
 /**
- * 应用主框架（天气版）。
+ * 应用主框架（天气版）——**真实数据版**。
+ *
+ * 与之前版本的唯一区别：屏幕上所有天气数字都来自网络（Open-Meteo），
+ * 城市列表来自**关键词网络搜索**，不再有任何手写假数据。
  *
  * 结构：
  *  ┌───────────────────────────────────┐
@@ -56,12 +71,9 @@ import androidx.compose.ui.graphics.Color
  *  │  [浮动胶囊导航栏]                  │  ← 概览 / 逐时 / 预报 / 城市
  *  └───────────────────────────────────┘
  *
- * 注意图层顺序：胶囊必须画在内容之后（下层），否则会被内容遮住。
- *
  * @param locationPermissionState 定位权限状态（由 MainActivity 申请后传入）。
- * @param permissionDiagnostics 权限诊断摘要（原始 FINE/COARSE 值 + 判定），
- *        显示在界面上供截图取证，排查「系统说已授权、App 说没权限」。
- * @param locateState 定位结果状态（拿到真实城市名后用于替换写死数据）。
+ * @param permissionDiagnostics 权限诊断摘要（原始 FINE/COARSE 值 + 判定）。
+ * @param locateState 定位结果状态（拿到真实城市名 + 坐标后去拉真实天气）。
  * @param onRetryLocate 手动重新定位的回调。
  */
 @Composable
@@ -69,44 +81,68 @@ fun LabApp(
     locationPermissionState: LocationPermissionState = LocationPermissionState.NOT_REQUESTED,
     permissionDiagnostics: String = "",
     locateState: LocateUiState = LocateUiState.Idle,
-    onRetryLocate: () -> Unit = {}
+    onRetryLocate: () -> Unit = {},
+    weatherViewModel: WeatherViewModel = viewModel()
 ) {
     var selectedIndex by rememberSaveable { mutableIntStateOf(0) }
     // 灵动岛是否展开（不跨进程保存，属于「临时 UI 状态」）
     var islandExpanded by remember { mutableStateOf(false) }
     val groups = WeatherGroup.entries
 
-    // 定位到的真实城市名（成功才有值）
-    val locatedCity = locateState.cityDisplayName
+    // ---- 订阅 ViewModel 的真实数据 ----
+    val savedCities by weatherViewModel.cities.collectAsState()
+    val selectedCityName by weatherViewModel.selectedCityName.collectAsState()
+    val weatherState by weatherViewModel.weather.collectAsState()
+    val searchState by weatherViewModel.search.collectAsState()
 
-    // ---- 城市管理状态（提升到这里，CitiesPage 只负责渲染） ----
-    // 注意：用 remember 而非 rememberSaveable —— List<String> 的默认实现
-    // （Arrays$ArrayList / EmptyList）不是 Serializable，存 Bundle 会崩。
-    // 城市选择属于临时 UI 状态，不需要跨进程恢复。
-    var extraCityNames by remember { mutableStateOf(listOf<String>()) }
-    var removedCityNames by remember { mutableStateOf(listOf<String>()) }
-    var selectedCityName by remember { mutableStateOf<String?>(null) }
+    // 真实天气（就绪时才有）
+    val realWeather = (weatherState as? WeatherUiState.Ready)?.weather
+    val currentCityName = (weatherState as? WeatherUiState.Ready)?.cityName
 
-    // 完整城市列表 = 默认列表（定位城市替换为真实名） - 用户删掉的 + 用户添加的
-    val cities: List<CityItem> = remember(locatedCity, extraCityNames, removedCityNames) {
-        val base = MockWeather.citiesWith(locatedCity)
-            .filter { it.name !in removedCityNames }
-        val extras = extraCityNames.mapNotNull { name ->
-            MockWeather.allCities.firstOrNull { it.name == name }
-        }
-        base + extras
+    // ---- 定位成功 → 用真实坐标去拉真实天气（只做一次） ----
+    LaunchedEffect(locateState) {
+        val success = locateState as? LocateUiState.Success ?: return@LaunchedEffect
+        val place = success.place
+        weatherViewModel.setLocatedCity(
+            name = place.displayName,
+            latitude = place.latitude,
+            longitude = place.longitude
+        )
     }
 
-    // 当前生效的城市对象：优先「用户手动选中」，否则「定位城市」，再否则列表第一项
-    val effectiveCity: CityItem? = remember(cities, selectedCityName, locatedCity) {
-        cities.firstOrNull { it.name == selectedCityName }
-            ?: cities.firstOrNull { it.isCurrent }
-            ?: cities.firstOrNull()
+    // ---- 真实数据 → UI 展示模型 ----
+    val currentWeather: CurrentWeather = remember(realWeather, currentCityName, weatherState) {
+        val base = realWeather?.toCurrentWeather()
+            ?: CurrentWeather(
+                // 没有数据时不编造数字；摘要说明当前处在哪个阶段
+                city = currentCityName.orEmpty(),
+                condition = SkyCondition.CLOUDY,
+                temperature = 0,
+                feelsLike = 0,
+                high = 0,
+                low = 0,
+                summary = when (weatherState) {
+                    is WeatherUiState.Loading -> "正在获取真实天气…"
+                    is WeatherUiState.Failed ->
+                        "获取失败：${(weatherState as WeatherUiState.Failed).message}"
+                    else -> "等待定位与城市选择…"
+                }
+            )
+        base.copy(city = currentCityName ?: base.city)
     }
 
-    // 实况数据：跟随当前生效的城市（切换城市时温度/天气真的会变）
-    val currentWeather = remember(effectiveCity, cities) {
-        MockWeather.currentForCity(effectiveCity, cities)
+    val hourlyPoints: List<HourlyPoint> = remember(realWeather) {
+        realWeather?.toHourlyPoints().orEmpty()
+    }
+    val dailyPoints: List<DailyPoint> = remember(realWeather) {
+        realWeather?.toDailyPoints().orEmpty()
+    }
+    val metricItems = remember(realWeather) { realWeather?.toMetrics().orEmpty() }
+    val updatedAt = remember(realWeather) { realWeather?.observedTimeText().orEmpty() }
+
+    // ---- SavedCity → UI 的 CityItem ----
+    val cityItems: List<CityItem> = remember(savedCities) {
+        savedCities.map { it.toCityItem() }
     }
 
     // 系统栏避让
@@ -117,6 +153,7 @@ fun LabApp(
         .asPaddingValues()
         .calculateBottomPadding()
         .coerceAtLeast(16.dp)
+
     Box(modifier = Modifier.fillMaxSize()) {
         // ---------- 内容区 ----------
         AnimatedContent(
@@ -127,34 +164,39 @@ fun LabApp(
             label = "weatherTabContent"
         ) { index ->
             when (groups[index]) {
-                WeatherGroup.OVERVIEW -> OverviewPage(current = currentWeather)
-                WeatherGroup.HOURLY -> HourlyPage()
-                WeatherGroup.DAILY -> DailyPage()
+                WeatherGroup.OVERVIEW -> OverviewPage(
+                    current = currentWeather,
+                    metrics = metricItems,
+                    updatedAt = updatedAt,
+                    sunrise = realWeather?.sunrise.orEmpty(),
+                    sunset = realWeather?.sunset.orEmpty()
+                )
+
+                WeatherGroup.HOURLY -> HourlyPage(hourly = hourlyPoints)
+
+                WeatherGroup.DAILY -> DailyPage(daily = dailyPoints)
+
                 WeatherGroup.CITIES -> CitiesPage(
                     locationPermissionState = locationPermissionState,
                     permissionDiagnostics = permissionDiagnostics,
                     locateState = locateState,
-                    cities = cities,
-                    selectedCity = effectiveCity?.name,
-                    onSelectCity = { city -> selectedCityName = city.name },
-                    onAddCity = { city ->
-                        if (city.name !in extraCityNames && city.name !in removedCityNames) {
-                            extraCityNames = extraCityNames + city.name
-                        } else if (city.name in removedCityNames) {
-                            // 被删过的默认城市，重新加回来
-                            removedCityNames = removedCityNames - city.name
+                    cities = cityItems,
+                    selectedCity = selectedCityName,
+                    onSelectCity = { city ->
+                        savedCities.firstOrNull { it.name == city.name }?.let {
+                            weatherViewModel.selectCity(it)
                         }
                     },
-                    onRemoveCity = { city ->
-                        if (city.name in extraCityNames) {
-                            extraCityNames = extraCityNames - city.name
-                        } else {
-                            removedCityNames = removedCityNames + city.name
-                        }
-                        // 如果删掉的正是当前选中项，回退到跟随定位
-                        if (selectedCityName == city.name) selectedCityName = null
-                    },
-                    onRetryLocate = onRetryLocate
+                    // 城市增删已由「搜索结果入口」接管，这里保留兼容签名
+                    onAddCity = {},
+                    onRemoveCity = { city -> weatherViewModel.removeCity(city.name) },
+                    onRetryLocate = onRetryLocate,
+                    searchState = searchState,
+                    onSearchQueryChange = { weatherViewModel.onSearchQueryChanged(it) },
+                    onPickSearchResult = { place ->
+                        weatherViewModel.addCity(place)
+                        weatherViewModel.clearSearch()
+                    }
                 )
             }
         }
@@ -194,6 +236,23 @@ fun LabApp(
         }
     }
 }
+
+/**
+ * 把 ViewModel 的 [SavedCity] 转成 UI 层用的 [CityItem]。
+ *
+ * 温度未知时用 [TEMP_UNKNOWN] 哨兵值表示「暂无」——UI 的城市卡片会渲染成「—」。
+ * （CityItem.temperature 是 Int 而非 Int?，这里用哨兵值而不是编造一个温度。）
+ */
+private fun SavedCity.toCityItem(): CityItem = CityItem(
+    name = name,
+    admin = subtitle,
+    temperature = temperature ?: TEMP_UNKNOWN,
+    condition = kind?.toSkyCondition() ?: SkyCondition.CLOUDY,
+    isCurrent = isCurrent
+)
+
+/** 「温度未知」哨兵值。UI 见到它显示「—」。 */
+const val TEMP_UNKNOWN: Int = Int.MIN_VALUE
 
 /**
  * 构建导航项：四个天气大类，使用自绘图标。

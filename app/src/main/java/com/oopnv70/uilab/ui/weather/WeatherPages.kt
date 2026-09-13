@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -40,6 +41,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.oopnv70.uilab.data.GeoPlace
+import com.oopnv70.uilab.ui.TEMP_UNKNOWN
 import com.oopnv70.uilab.location.LocateStage
 import com.oopnv70.uilab.location.LocateUiState
 import com.oopnv70.uilab.location.LocationPermissionState
@@ -138,7 +141,15 @@ private fun SourceTag(source: WeatherSource) {
 @Composable
 fun OverviewPage(
     modifier: Modifier = Modifier,
-    current: CurrentWeather = MockWeather.current
+    current: CurrentWeather,
+    /** 关键指标（来自真实数据）。 */
+    metrics: List<WeatherMetric> = emptyList(),
+    /** 更新时间文案（来自接口观测时刻）。 */
+    updatedAt: String = "",
+    /** 日出时间（真实）。 */
+    sunrise: String = "",
+    /** 日落时间（真实）。 */
+    sunset: String = ""
 ) {
 
     WeatherPageScaffold {
@@ -187,7 +198,7 @@ fun OverviewPage(
                                 )
                                 Spacer(Modifier.weight(1f))
                                 Text(
-                                    text = "更新 ${MockWeather.UPDATED_AT}",
+                                    text = if (updatedAt.isBlank()) "实时" else "更新 $updatedAt",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                                 )
@@ -257,8 +268,14 @@ fun OverviewPage(
                         SectionTitle("关键指标", trailing = "点击查看详情")
                         Spacer(Modifier.height(14.dp))
 
-                        val metrics = MockWeather.metrics
-                        // 两列排布
+                        // 真实指标：全部来自 Open-Meteo，无数据时显示「—」
+                        if (metrics.isEmpty()) {
+                            Text(
+                                text = "正在获取真实数据…",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline
+                            )
+                        }
                         metrics.chunked(2).forEach { rowItems ->
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -290,14 +307,14 @@ fun OverviewPage(
                         ) {
                             SunTimeBlock(
                                 title = "日出",
-                                time = MockWeather.sunrise.value,
-                                source = MockWeather.sunrise.source,
+                                time = sunrise.ifBlank { "—" },
+                                source = WeatherSource.OPEN_METEO,
                                 modifier = Modifier.weight(1f)
                             )
                             SunTimeBlock(
                                 title = "日落",
-                                time = MockWeather.sunset.value,
-                                source = MockWeather.sunset.source,
+                                time = sunset.ifBlank { "—" },
+                                source = WeatherSource.OPEN_METEO,
                                 modifier = Modifier.weight(1f)
                             )
                         }
@@ -421,9 +438,11 @@ private fun SunTimeBlock(
 // 2. 逐时页
 // =====================================================================
 @Composable
-fun HourlyPage(modifier: Modifier = Modifier) {
-    val hourly = MockWeather.hourly
-
+fun HourlyPage(
+    modifier: Modifier = Modifier,
+    /** 真实逐时数据（来自 Open-Meteo）。空列表表示还在加载。 */
+    hourly: List<HourlyPoint> = emptyList()
+) {
     WeatherPageScaffold {
         LazyColumn(
             modifier = modifier.fillMaxSize(),
@@ -596,6 +615,15 @@ private fun HourlyChip(point: HourlyPoint) {
  */
 @Composable
 private fun TemperatureBars(points: List<HourlyPoint>) {
+    // 空列表保护：加载中 / 请求失败时不要崩（minOf 会在空集合上抛异常）
+    if (points.isEmpty()) {
+        Text(
+            text = "暂无逐时数据",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.outline
+        )
+        return
+    }
     val min = points.minOf { it.temperature }
     val max = points.maxOf { it.temperature }
     val range = (max - min).coerceAtLeast(1)
@@ -640,9 +668,11 @@ private fun TemperatureBars(points: List<HourlyPoint>) {
 // 3. 预报页（7 天）
 // =====================================================================
 @Composable
-fun DailyPage(modifier: Modifier = Modifier) {
-    val daily = MockWeather.daily
-
+fun DailyPage(
+    modifier: Modifier = Modifier,
+    /** 真实 7 天预报（来自 Open-Meteo）。空列表表示还在加载。 */
+    daily: List<DailyPoint> = emptyList()
+) {
     WeatherPageScaffold {
         LazyColumn(
             modifier = modifier.fillMaxSize(),
@@ -759,6 +789,15 @@ private fun DailyRow(day: DailyPoint, isFirst: Boolean) {
 /** 温度区间条形图（每天一条，显示最低~最高区间位置）。 */
 @Composable
 private fun DailyRangeBars(days: List<DailyPoint>) {
+    // 空列表保护：加载中 / 请求失败时不要崩（minOf 会在空集合上抛异常）
+    if (days.isEmpty()) {
+        Text(
+            text = "暂无预报数据",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.outline
+        )
+        return
+    }
     val globalMin = days.minOf { it.low }
     val globalMax = days.maxOf { it.high }
     val range = (globalMax - globalMin).coerceAtLeast(1)
@@ -839,6 +878,12 @@ fun CitiesPage(
     onAddCity: (CityItem) -> Unit = {},
     onRemoveCity: (CityItem) -> Unit = {},
     onRetryLocate: () -> Unit = {},
+    /** 网络搜索状态（真实搜索结果）。 */
+    searchState: CitySearchState = CitySearchState.Idle,
+    /** 输入关键词变化 → 触发网络搜索（内部有防抖）。 */
+    onSearchQueryChange: (String) -> Unit = {},
+    /** 点击某个搜索结果 → 真正加入城市列表（会去拉它的真实天气）。 */
+    onPickSearchResult: (GeoPlace) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     // 手动再次申请定位权限（例如用户第一次点了「不允许」）
@@ -856,15 +901,14 @@ fun CitiesPage(
     var showAddSheet by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
 
-    // 可添加的城市 = 全部城市 - 已在列表里的
-    val addable = remember(cities, query) {
-        MockWeather.allCities
-            .filter { candidate -> cities.none { it.name == candidate.name } }
-            .filter { candidate ->
-                query.isBlank() ||
-                        candidate.name.contains(query, ignoreCase = true) ||
-                        candidate.admin.contains(query, ignoreCase = true)
-            }
+    // 「可添加的城市」不再来自本地预置表，而是**实时网络搜索结果**。
+    // 已加入列表的城市会被过滤掉，避免重复添加。
+    val addable: List<GeoPlace> = remember(searchState, cities) {
+        when (searchState) {
+            is CitySearchState.Done ->
+                searchState.results.filter { hit -> cities.none { it.name == hit.name } }
+            else -> emptyList()
+        }
     }
 
     WeatherPageScaffold {
@@ -970,7 +1014,11 @@ fun CitiesPage(
                                     Spacer(Modifier.width(8.dp))
                                     BasicTextField(
                                         value = query,
-                                        onValueChange = { query = it },
+                                        onValueChange = {
+                                            query = it
+                                            // 每次输入都通知 ViewModel（内部 350ms 防抖后发请求）
+                                            onSearchQueryChange(it)
+                                        },
                                         singleLine = true,
                                         textStyle = MaterialTheme.typography.bodyMedium.copy(
                                             color = MaterialTheme.colorScheme.onSurface
@@ -1007,23 +1055,58 @@ fun CitiesPage(
                             }
                             Spacer(Modifier.height(10.dp))
 
-                            if (addable.isEmpty()) {
-                                Text(
-                                    text = if (query.isBlank()) "已经添加了全部城市" else "没有匹配的城市",
+                            when {
+                                // 输入为空 → 提示
+                                query.isBlank() -> Text(
+                                    text = "输入关键词搜索城市（支持中文/英文），有网就能搜到",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.outline,
                                     modifier = Modifier.padding(vertical = 8.dp)
                                 )
-                            } else {
-                                addable.forEach { candidate ->
+
+                                // 正在请求网络
+                                searchState is CitySearchState.Loading -> Row(
+                                    modifier = Modifier.padding(vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(14.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        text = "正在搜索「$query」…",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.outline
+                                    )
+                                }
+
+                                // 请求失败
+                                searchState is CitySearchState.Failed -> Text(
+                                    text = "搜索失败：${searchState.message}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(vertical = 8.dp)
+                                )
+
+                                // 搜到但没有结果
+                                addable.isEmpty() -> Text(
+                                    text = "没有找到「$query」，换个关键词试试（也可试试英文名）",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.outline,
+                                    modifier = Modifier.padding(vertical = 8.dp)
+                                )
+
+                                // 真实搜索结果
+                                else -> addable.forEach { candidate ->
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .clip(RoundedCornerShape(12.dp))
                                             .clickable {
-                                                onAddCity(candidate)
-                                                // 添加后自动切换到它
-                                                onSelectCity(candidate)
+                                                // 真正加入：会去拉这个坐标的真实天气
+                                                onPickSearchResult(candidate)
                                                 query = ""
                                                 showAddSheet = false
                                             }
@@ -1043,19 +1126,14 @@ fun CitiesPage(
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 color = MaterialTheme.colorScheme.onSurface
                                             )
-                                            if (candidate.admin.isNotBlank()) {
+                                            if (candidate.subtitle.isNotBlank()) {
                                                 Text(
-                                                    text = candidate.admin,
+                                                    text = candidate.subtitle,
                                                     style = MaterialTheme.typography.labelSmall,
                                                     color = MaterialTheme.colorScheme.outline
                                                 )
                                             }
                                         }
-                                        Text(
-                                            text = "${candidate.temperature}°",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
                                     }
                                 }
                             }
@@ -1194,7 +1272,8 @@ private fun CityCard(
             )
             Spacer(Modifier.width(12.dp))
             Text(
-                text = "${city.temperature}°",
+                // 温度未取到时不编造数字，显示「—」
+                text = if (city.temperature == TEMP_UNKNOWN) "—" else "${city.temperature}°",
                 fontSize = 28.sp,
                 fontWeight = FontWeight.Light,
                 color = MaterialTheme.colorScheme.onSurface

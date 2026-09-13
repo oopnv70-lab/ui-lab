@@ -273,7 +273,7 @@ private fun ExpandedContent(current: CurrentWeather) {
 
         // 数据来源标注（小字）
         Text(
-            text = "数据更新于 ${MockWeather.UPDATED_AT} · 来源 ${WeatherSource.OPEN_METEO.displayName}",
+            text = "数据来自 ${WeatherSource.OPEN_METEO.displayName}（实时）",
             fontSize = 9.sp,
             color = MaterialTheme.colorScheme.outline
         )
