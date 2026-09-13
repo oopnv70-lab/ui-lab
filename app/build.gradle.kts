@@ -13,18 +13,49 @@ android {
     compileSdk = 37
     compileSdkMinor = 0
 
+    // ------------------------------------------------------------------
+    // 固定签名（解决「每次都要卸载重装」）
+    //
+    // 默认的 debug 构建会用一个「每次都由 Gradle 临时生成」的 debug keystore，
+    // 导致每次 CI 产出的 APK 签名都不一样，Android 因此认为它们是不同应用，
+    // 只能卸载后重装，数据和权限都会丢。
+    //
+    // 这里改为：签名信息从环境变量读取（CI 里由 GitHub Secrets 注入），
+    // 只要 keystore 不变，每次构建的签名就完全一致，可以直接覆盖安装。
+    //
+    // 本地构建时若没有设置这些环境变量，就回退到默认 debug 签名，不影响开发。
+    // ------------------------------------------------------------------
+    val keystorePath = System.getenv("UILAB_KEYSTORE_PATH")
+    val hasFixedSigning = keystorePath != null && file(keystorePath).exists()
+
+    signingConfigs {
+        if (hasFixedSigning) {
+            create("fixed") {
+                storeFile = file(keystorePath!!)
+                storePassword = System.getenv("UILAB_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("UILAB_KEY_ALIAS")
+                keyPassword = System.getenv("UILAB_KEY_PASSWORD")
+            }
+        }
+    }
+
     defaultConfig {
         applicationId = "com.oopnv70.uilab"
         minSdk = 26
         targetSdk = 37
         versionCode = 1
         // 每次 UI 调整递增，便于确认手机上装的是哪一版构建
-        versionName = "0.4-weather-ui"
+        versionName = "0.5-fixed-signing"
     }
 
     buildTypes {
         debug {
             isMinifyEnabled = false
+            // 有固定签名就用固定签名；没有则什么都不设，
+            // 让 AGP 用内置的 debug 签名（避免 getByName("debug") 的时序问题）。
+            if (hasFixedSigning) {
+                signingConfig = signingConfigs.getByName("fixed")
+            }
         }
         release {
             isMinifyEnabled = true

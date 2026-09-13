@@ -1,17 +1,18 @@
 name: Build APK
-
-# 只产出一个「有签名、可直接安装」的 debug APK。
-# - 不再构建 release（之前会额外产出未签名的 app-release-unsigned.apk
-#   以及 Gradle 自动打包的 unsigned-apk.zip，都是无法安装的无用产物）
-# - 构建时间因此大约减半
+# 产出一个「有固定签名、可直接覆盖安装」的 debug APK。
+#
+# 固定签名说明（解决每次都要卸载重装的痛点）：
+#   Gradle 默认的 debug 签名用的是「临时生成的 debug keystore」，
+#   CI 每次跑都是全新的，导致每个 APK 签名都不同，
+#   Android 因此判定为不同应用，只能卸载重装。
+#   这里改为用仓库 Secret 里的一份固定 keystore 来签名，
+#   签名从此不变，可以直接覆盖安装升级。
 on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   build:
     name: Build APK
@@ -19,19 +20,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
-
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-
       - name: Accept licenses
         run: yes | sdkmanager --licenses > /dev/null 2>&1 || true
-
       - name: Install Android 17 platform (API 37)
         run: |
           # Android 17 的平台包名是 platforms;android-37.0（次要版本命名）
@@ -39,18 +36,49 @@ jobs:
           echo "--- installed platforms ---"
           ls "$ANDROID_HOME/platforms"
 
+      # ------------------------------------------------------------------
+      # 还原固定签名用的 keystore
+      #   Secret 里存的是 PKCS12 的 base64；这里解码后，
+      #   再用 keytool 转成 JKS，喂给 Gradle 的 signingConfigs。
+      # ------------------------------------------------------------------
+      - name: Restore fixed signing keystore
+        id: signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          set -e
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::KEYSTORE_BASE64 secret is missing; APK would not have a stable signature."
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/ui-lab.p12"
+          # PKCS12 -> JKS（JKS 是 Gradle/Android 的默认 keystore 类型，兼容性最好）
+          keytool -importkeystore \
+            -srckeystore "$RUNNER_TEMP/ui-lab.p12" -srcstoretype PKCS12 \
+            -srcstorepass "$KEYSTORE_PASSWORD" \
+            -destkeystore "$RUNNER_TEMP/ui-lab.jks" -deststoretype JKS \
+            -deststorepass "$KEYSTORE_PASSWORD" -destkeypass "$KEYSTORE_PASSWORD" \
+            -alias "$KEY_ALIAS" -noprompt
+          echo "keystore prepared:"
+          keytool -list -keystore "$RUNNER_TEMP/ui-lab.jks" -storepass "$KEYSTORE_PASSWORD" | head -10
+
       - name: Point Gradle to SDK only
         run: |
           # 只写 sdk.dir；不要写已废弃的 ndk.dir
           echo "sdk.dir=$ANDROID_HOME" >> local.properties
           cat local.properties
-
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-
       - name: Generate Gradle wrapper
         run: gradle wrapper --gradle-version 9.7.1
       - name: Build Debug APK
+        env:
+          UILAB_KEYSTORE_PATH: ${{ runner.temp }}/ui-lab.jks
+          UILAB_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          UILAB_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          UILAB_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           ./gradlew :app:assembleDebug --stacktrace --no-daemon 2>&1 | tee build.log
           status=${PIPESTATUS[0]}
@@ -61,18 +89,15 @@ jobs:
           done
           exit $status
 
-
       - name: Collect and verify APK
         run: |
           set -o pipefail
           mkdir -p out
-          # debug 构建只会产出 app-debug.apk（已用 debug keystore 签名，可直接安装）
           cp app/build/outputs/apk/debug/app-debug.apk out/ui-lab-debug.apk
           ls -la out
-          echo "--- APK 签名校验 ---"
+          echo "--- APK 签名校验（应显示 CN=ui-lab） ---"
           APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
           "$APKSIGNER" verify --print-certs out/ui-lab-debug.apk
-
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:

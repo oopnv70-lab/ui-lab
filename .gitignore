@@ -9,3 +9,8 @@
 .cxx
 local.properties
 app/build
+
+# 签名密钥绝不能提交到仓库（公开仓库更不行）
+*.jks
+*.keystore
+*.p12
