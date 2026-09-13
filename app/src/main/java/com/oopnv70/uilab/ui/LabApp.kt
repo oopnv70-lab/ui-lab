@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -160,7 +161,28 @@ fun LabApp(
         .calculateBottomPadding()
         .coerceAtLeast(16.dp)
 
+    // ---- 下拉刷新状态 ----
+    // 不能直接用 weatherState is Loading 当「刷新中」，
+    // 否则首次进入页面（也在 Loading）会莫名其妙地转圈。
+    // 所以这里单独记一个 refreshing：只有用户主动下拉才置 true，
+    // 数据回来（不再是 Loading）再置回 false。
+    var refreshing by remember { mutableStateOf(false) }
+    LaunchedEffect(weatherState) {
+        if (weatherState !is WeatherUiState.Loading) {
+            refreshing = false
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
+        // ---------- 内容区（支持下拉刷新） ----------
+        PullToRefreshBox(
+            isRefreshing = refreshing,
+            onRefresh = {
+                refreshing = true
+                weatherViewModel.refresh()
+            },
+            modifier = Modifier.fillMaxSize()
+        ) {
         // ---------- 内容区 ----------
         // 转场设计（解决「切换生硬」）：
         //   1. 方向感知：往右切（索引变大）新页从右侧滑入，往左切从左侧滑入。
@@ -246,6 +268,7 @@ fun LabApp(
                 )
             }
         }
+        } // ← 闭合 PullToRefreshBox
         // ---------- 底部：浮动胶囊导航栏 ----------
         Box(
             modifier = Modifier
