@@ -2,6 +2,7 @@ package com.oopnv70.uilab.ui.weather
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
@@ -13,6 +14,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -41,6 +43,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -63,6 +66,14 @@ import androidx.compose.ui.unit.sp
 /** 收起态高度（小药丸）。 */
 private val CollapsedHeight = 34.dp
 
+/**
+ * 收起态宽度。
+ * 收起态原本是「按内容自适应」，但那样没法和其他宽度做插值动画
+ * （未知值无法参与补间）。这里给一个固定的估算值，
+ * 与「城市 + 温度 + 箭头」的实际内容宽度接近，动画才能平滑。
+ */
+private val CollapsedWidth = 132.dp
+
 @Composable
 fun DynamicIslandCapsule(
     current: CurrentWeather,
@@ -77,55 +88,80 @@ fun DynamicIslandCapsule(
         label = "islandArrow"
     )
 
-    // 背景渐变：收起时更淡，展开时更饱满
-    val gradient = Brush.linearGradient(
-        colors = if (expanded) {
-            listOf(
-                MaterialTheme.colorScheme.primaryContainer,
-                MaterialTheme.colorScheme.surfaceContainerHigh
-            )
-        } else {
-            listOf(
-                MaterialTheme.colorScheme.surfaceContainerHigh,
-                MaterialTheme.colorScheme.surfaceContainerHigh
-            )
-        }
-    )
+    // ------------------------------------------------------------------
+    // 展开/收起的过渡动画
+    //
+    // 之前的问题：内容区（AnimatedVisibility）有动画，但「胶囊外框」是
+    // 瞬间跳变的 —— 宽度、圆角、内边距都由 if (expanded) 直接二选一，
+    // 于是展开的那一帧外框突然变宽变方，看起来就是「一瞬间弹出」。
+    //
+    // 现在把外框本身也纳入动画：宽度 / 圆角 / 内边距都用动画值驱动，
+    // 外框与内容同步平滑变化。
+    // ------------------------------------------------------------------
+    // 外框动画统一时长/缓动（Dp 类型的 tween，供 animateDpAsState 使用）
+    val spec = tween<Dp>(320, easing = FastOutSlowInEasing)
 
-    Surface(
-        modifier = modifier
-            // 关键：收起时宽度「按内容」，展开时才撑满。
-            // 用 fillMaxWidth 会强制整行宽 —— 那就是之前「太大」的元凶。
-            .then(if (expanded) Modifier.fillMaxWidth() else Modifier)
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onToggle
-            ),
-        shape = if (expanded) {
-            RoundedCornerShape(26.dp)
-        } else {
-            RoundedCornerShape(CollapsedHeight / 2)
-        },
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        tonalElevation = 3.dp,
-        shadowElevation = 5.dp
-    ) {
-        Box(modifier = Modifier.background(gradient)) {
-            Column(
-                // 收起态时 Column 也按内容收窄
-                modifier = if (expanded) Modifier.fillMaxWidth() else Modifier
-            ) {
-                // ---------------- 收起态常驻的一行（小药丸） ----------------
-                Row(
-                    modifier = Modifier
-                        .height(CollapsedHeight)
-                        .padding(
-                            start = if (expanded) 14.dp else 10.dp,
-                            end = if (expanded) 12.dp else 10.dp
-                        ),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+    BoxWithConstraints(modifier = modifier) {
+        // 展开目标宽度 = 当前可用宽度；收起宽度按内容估算（小药丸）。
+        val expandedWidth = maxWidth
+        val collapsedWidth = CollapsedWidth
+
+        val width by animateDpAsState(
+            targetValue = if (expanded) expandedWidth else collapsedWidth,
+            animationSpec = spec,
+            label = "islandWidth"
+        )
+        val corner by animateDpAsState(
+            targetValue = if (expanded) 26.dp else CollapsedHeight / 2,
+            animationSpec = spec,
+            label = "islandCorner"
+        )
+        val hPadding by animateDpAsState(
+            targetValue = if (expanded) 14.dp else 10.dp,
+            animationSpec = spec,
+            label = "islandPadding"
+        )
+
+        // 背景渐变：收起时更淡，展开时更饱满
+        val gradient = Brush.linearGradient(
+            colors = if (expanded) {
+                listOf(
+                    MaterialTheme.colorScheme.primaryContainer,
+                    MaterialTheme.colorScheme.surfaceContainerHigh
+                )
+            } else {
+                listOf(
+                    MaterialTheme.colorScheme.surfaceContainerHigh,
+                    MaterialTheme.colorScheme.surfaceContainerHigh
+                )
+            }
+        )
+
+        Surface(
+            modifier = Modifier
+                // 宽度用动画值（不再是 if 二选一）
+                .width(width)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onToggle
+                ),
+            // 圆角也用动画值，收起是完整胶囊、展开平滑过渡到圆角矩形
+            shape = RoundedCornerShape(corner),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            tonalElevation = 3.dp,
+            shadowElevation = 5.dp
+        ) {
+            Box(modifier = Modifier.background(gradient)) {
+                Column {
+                    // ---------------- 收起态常驻的一行（小药丸） ----------------
+                    Row(
+                        modifier = Modifier
+                            .height(CollapsedHeight)
+                            // 内边距也走动画，避免展开时文字「跳」一下
+                            .padding(start = hPadding, end = hPadding),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                     // 天气图标（小）
                     Icon(
                         imageVector = current.condition.icon(
@@ -191,6 +227,7 @@ fun DynamicIslandCapsule(
             }
         }
     }
+}
 }
 
 /** 展开后的详细内容。 */
