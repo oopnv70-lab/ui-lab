@@ -538,6 +538,13 @@ fun HourlyPage(
                         Spacer(Modifier.height(12.dp))
 
                         // ---- 24 小时概率柱状图形表（横向可滑动，柱子够粗才看得清） ----
+                        // 先说明这排柱子是什么：光有数字没有单位，谁也看不懂。
+                        Text(
+                            text = "未来 24 小时 · 每小时降水概率（%）",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
                         PrecipitationChart(points = hourly, highlightIndex = 1)
 
                         Spacer(Modifier.height(10.dp))
@@ -728,9 +735,9 @@ private fun PrecipitationChart(
                 modifier = Modifier.width(34.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // 概率数值
+                // 概率数值（带 % 单位，否则一排数字看不出含义）
                 Text(
-                    text = if (prob > 0) "$prob" else "",
+                    text = if (prob > 0) "$prob%" else "0%",
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = if (isNext) FontWeight.SemiBold else FontWeight.Normal,
                     color = if (isNext) primary else MaterialTheme.colorScheme.onSurfaceVariant
