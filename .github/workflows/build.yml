@@ -1,8 +1,16 @@
 name: Build APK
+
+# 只产出一个「有签名、可直接安装」的 debug APK。
+# - 不再构建 release（之前会额外产出未签名的 app-release-unsigned.apk
+#   以及 Gradle 自动打包的 unsigned-apk.zip，都是无法安装的无用产物）
+# - 构建时间因此大约减半
 on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -46,21 +54,20 @@ jobs:
       - name: Build Debug APK
         run: ./gradlew :app:assembleDebug --stacktrace --no-daemon
 
-      - name: Build Release APK
-        run: ./gradlew :app:assembleRelease --stacktrace --no-daemon
-
-      - name: Collect APKs
-        if: always()
+      - name: Collect and verify APK
         run: |
+          set -o pipefail
           mkdir -p out
-          cp app/build/outputs/apk/debug/*.apk out/ 2>/dev/null || true
-          cp app/build/outputs/apk/release/*.apk out/ 2>/dev/null || true
-          ls -la out || true
+          # debug 构建只会产出 app-debug.apk（已用 debug keystore 签名，可直接安装）
+          cp app/build/outputs/apk/debug/app-debug.apk out/ui-lab-debug.apk
+          ls -la out
+          echo "--- APK 签名校验 ---"
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$APKSIGNER" verify --print-certs out/ui-lab-debug.apk
 
       - name: Upload APK
-        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: apk
-          path: out/*.apk
-          if-no-files-found: warn
+          name: ui-lab-debug-apk
+          path: out/ui-lab-debug.apk
+          if-no-files-found: error
