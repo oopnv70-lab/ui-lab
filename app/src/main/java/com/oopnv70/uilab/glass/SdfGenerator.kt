@@ -142,8 +142,10 @@ fun generateSdf(source: Bitmap, maxDistance: Int = 60): Bitmap {
             val normDist: Float = when {
                 d == Long.MAX_VALUE -> 0f          // 完全找不到玻璃（图像里没有形状）
                 else -> {
+                    // 全部用 Float 运算，避免 Double/Float 混型导致
+                    // "expected Float, actual Double" 之类的类型不匹配。
                     val px = sqrt(d.toDouble()).toFloat()   // 真实像素距离，内部点=0
-                    (1.0 - px / maxDistanceF).coerceIn(0f, 1f)
+                    (1f - px / maxDistanceF).coerceIn(0f, 1f)
                 }
             }
 
@@ -157,10 +159,10 @@ fun generateSdf(source: Bitmap, maxDistance: Int = 60): Bitmap {
                 val vx = dx[i]
                 val vy = dy[i]
                 if (vx != 0 || vy != 0) {
-                    val len = sqrt((vx.toDouble() * vx + vy.toDouble() * vy))
-                    if (len > 0.0) {
-                        nx = ((vx / len) + 1.0).toFloat() * 0.5f
-                        ny = ((vy / len) + 1.0).toFloat() * 0.5f
+                    val len = sqrt((vx.toDouble() * vx + vy.toDouble() * vy)).toFloat()
+                    if (len > 0f) {
+                        nx = ((vx / len) + 1f) * 0.5f
+                        ny = ((vy / len) + 1f) * 0.5f
                     }
                 }
             }

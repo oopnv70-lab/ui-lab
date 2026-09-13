@@ -187,11 +187,17 @@ class GlassView @JvmOverloads constructor(
             }
 
             // offscreen → backdrop（如果需要轻微模糊）
+            // ⚠️ 用显式 if-null 而不是 `?.let { paint.setRenderEffect(it) }`：
+            //    `let` 里的 lambda 参数类型推断在 AGP 9.x + Kotlin 2.2 下会失败
+            //    （报 Cannot infer type / Unresolved reference），显式分支最稳。
             val bc = Canvas(bd)
             bc.drawColor(0, PorterDuff.Mode.CLEAR)
             val bmp = off.copy(Bitmap.Config.ARGB_8888, false)
             val paint = Paint(Paint.FILTER_BITMAP_FLAG)
-            backdropRenderEffect?.let { paint.setRenderEffect(it) }
+            val effect = backdropRenderEffect
+            if (effect != null) {
+                paint.setRenderEffect(effect)
+            }
             bc.drawBitmap(bmp, 0f, 0f, paint)
             bmp.recycle()
         }
