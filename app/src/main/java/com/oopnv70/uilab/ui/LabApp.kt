@@ -1,9 +1,15 @@
 package com.oopnv70.uilab.ui
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
@@ -156,10 +162,50 @@ fun LabApp(
 
     Box(modifier = Modifier.fillMaxSize()) {
         // ---------- 内容区 ----------
+        // 转场设计（解决「切换生硬」）：
+        //   1. 方向感知：往右切（索引变大）新页从右侧滑入，往左切从左侧滑入。
+        //      这样「概览 → 城市」和「城市 → 概览」的方向是相反的，
+        //      符合空间直觉，不再是原地闪一下。
+        //   2. 组合动画：位移 + 淡入淡出 + 轻微缩放（0.98 → 1.0），
+        //      比纯淡入淡出更有「翻页」的实体感。
+        //   3. 时长 300/220 ms：低于 250ms 人眼会觉得突兀，300ms 左右最自然。
+        //   4. 关掉 SizeTransform：不同页面高度不同，默认的尺寸动画会把内容
+        //      强行拉伸/裁剪，反而制造抖动。
         AnimatedContent(
             targetState = selectedIndex,
             transitionSpec = {
-                fadeIn(tween(220)) togetherWith fadeOut(tween(140))
+                val forward = targetState > initialState
+                // 新页面入场方向：向右切 → 从右边进来；向左切 → 从左边进来
+                val enterFrom = if (forward) 1 else -1
+                // 旧页面退场方向：与入场相反
+                val exitTo = -enterFrom
+
+                val enter = slideInHorizontally(
+                    animationSpec = tween(300, easing = FastOutSlowInEasing),
+                    initialOffsetX = { full -> enterFrom * full / 6 }
+                ) + fadeIn(
+                    animationSpec = tween(220, delayMillis = 60)
+                ) + scaleIn(
+                    animationSpec = tween(300, easing = FastOutSlowInEasing),
+                    initialScale = 0.97f
+                )
+
+                val exit = slideOutHorizontally(
+                    animationSpec = tween(220, easing = FastOutLinearInEasing),
+                    targetOffsetX = { full -> exitTo * full / 8 }
+                ) + fadeOut(
+                    animationSpec = tween(140)
+                )
+
+                // 注意：ContentTransform.sizeTransform 是只读的 val，
+                // 不能用 apply { sizeTransform = null } 赋值（会编译失败）。
+                // 官方文档明确支持：不需要尺寸动画时，在构造函数里传 sizeTransform = null。
+                ContentTransform(
+                    targetContentEnter = enter,
+                    initialContentExit = exit,
+                    targetContentZIndex = 0f,
+                    sizeTransform = null
+                )
             },
             label = "weatherTabContent"
         ) { index ->
