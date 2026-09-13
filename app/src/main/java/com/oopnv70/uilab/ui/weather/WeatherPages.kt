@@ -26,7 +26,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -1037,9 +1040,11 @@ fun CitiesPage(
 
             // ---------- 城市卡片列表 ----------
             itemsIndexed(cities) { _, city ->
-                val isSelected = selectedCity == null
-                        ? city.isCurrent
-                        : city.name == selectedCity
+                val isSelected = if (selectedCity == null) {
+                    city.isCurrent
+                } else {
+                    city.name == selectedCity
+                }
                 CityCard(
                     city = city,
                     selected = isSelected,
