@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import com.oopnv70.uilab.settings.AppSettingsState
 import com.oopnv70.uilab.settings.TemperatureUnit
 import com.oopnv70.uilab.settings.ThemeMode
+import com.oopnv70.uilab.settings.ThemeStyle
 import com.oopnv70.uilab.ui.weather.mdiClose
 import com.oopnv70.uilab.ui.weather.mdiCog
 
@@ -58,6 +59,16 @@ import com.oopnv70.uilab.ui.weather.mdiCog
 /** 设置页所有可选的分节。 */
 private val ThemeModes = ThemeMode.entries.toList()
 private val TemperatureUnits = TemperatureUnit.entries.toList()
+private val ThemeStyles = ThemeStyle.entries.toList()
+
+/**
+ * 「风格」这一行的说明文字。
+ *
+ * 特意把「实时渲染」写出来：用户选玻璃之前应该知道它会持续占用 GPU，
+ * 而不是选完才发现掉帧。诚实说明比事后道歉便宜。
+ */
+private const val SettingsStylesDescription =
+    "默认：实心卡片；液态玻璃：真折射 + 高光，实时渲染（较耗性能）"
 
 /**
  * 设置页（全屏覆盖）。
@@ -116,9 +127,21 @@ fun SettingsPage(
                                 onSettingsChange(settings.copy(themeMode = ThemeModes[index]))
                             }
                         )
-
                         CardDivider()
-
+                        // 主题风格：默认实心卡片 / 液态玻璃
+                        //
+                        // 这是与「主题」正交的第二个维度：主题管亮暗，
+                        // 风格管材质。所以不合并成一个下拉。
+                        ChoiceRow(
+                            title = "风格",
+                            subtitle = SettingsStylesDescription,
+                            options = ThemeStyles.map { it.label },
+                            selectedIndex = ThemeStyles.indexOf(settings.themeStyle),
+                            onSelect = { index ->
+                                onSettingsChange(settings.copy(themeStyle = ThemeStyles[index]))
+                            }
+                        )
+                        CardDivider()
                         // 动态取色：开关
                         SwitchRow(
                             title = "动态取色",

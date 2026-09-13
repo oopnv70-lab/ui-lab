@@ -1,5 +1,7 @@
 package com.oopnv70.uilab.ui
 
+import android.annotation.SuppressLint
+import android.os.Build
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ContentTransform
@@ -44,9 +46,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.oopnv70.uilab.glass.GlassDefaults
+import com.oopnv70.uilab.glass.LiquidGlassSurface
 import com.oopnv70.uilab.location.LocateUiState
 import com.oopnv70.uilab.location.LocationPermissionState
 import com.oopnv70.uilab.settings.AppSettingsState
+import com.oopnv70.uilab.settings.ThemeStyle
 import com.oopnv70.uilab.ui.components.FloatingPillNavigationBar
 import com.oopnv70.uilab.ui.components.NavItem
 import com.oopnv70.uilab.ui.settings.SettingsPage
@@ -98,6 +103,11 @@ import com.oopnv70.uilab.ui.weather.toSkyCondition
  * @param appSettings 当前应用设置（主题 / 单位等）。
  * @param onSettingsChange 用户在设置页改动设置后的回调（由调用方落盘）。
  */
+// 液态玻璃用到的 RuntimeShader / AndroidView 桥接是 API 31+ 的。
+// 调用处已经做了 `Build.VERSION.SDK_INT >= S` 的运行时守卫，
+// 所以这里用 @SuppressLint("NewApi") 关掉 lint 的静态告警 ——
+// 不这样做，lint 会因为「函数体内可能触达 31 的 API」而直接报错。
+@SuppressLint("NewApi")
 @Composable
 fun LabApp(
     locationPermissionState: LocationPermissionState = LocationPermissionState.NOT_REQUESTED,
@@ -348,6 +358,13 @@ fun LabApp(
         //
         // 只在设置页关闭时显示：设置页已全屏覆盖，不需要再叠一个按钮。
         if (!settingsOpen) {
+            // 玻璃模式下，齿轮按钮由真·液态玻璃承托。
+            //
+            // ⚠️ 结构上必须让玻璃**后画**（在 Box 里后声明 = 画在上层），
+            //    因为 GlassView 要抓的是"它身后"的内容 —— 也就是下面的天气页。
+            //    所以这里不是"给按钮加个背景"，而是"在按钮位置叠一层玻璃"。
+            val glassMode = appSettings.themeStyle == ThemeStyle.LIQUID_GLASS
+
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
@@ -358,10 +375,29 @@ fun LabApp(
                     )
                     .size(42.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.92f))
+                    // 玻璃模式下不画实心底 —— 由 GlassView 负责那块视觉；
+                    // 默认模式维持原来的半透明实心圆底。
+                    .then(
+                        if (glassMode) Modifier
+                        else Modifier.background(
+                            MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.92f)
+                        )
+                    )
                     .clickable { settingsOpen = true },
                 contentAlignment = Alignment.Center
             ) {
+                // ---- 真·液态玻璃层 ----
+                // 放在图标之前声明，这样它在下层、图标浮在上面。
+                // （GlassView 自己会去抓背后的天气页内容，与这里的兄弟节点无关。）
+                if (glassMode && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    LiquidGlassSurface(
+                        modifier = Modifier.fillMaxSize(),
+                        cornerRadiusDp = 999f,          // 圆形
+                        refract = GlassDefaults.REFRACT,
+                        tint = GlassDefaults.TINT,
+                        backdropBlur = 0f
+                    )
+                }
                 Icon(
                     // 同 buildNavItems：图标描边/填充色在构建时已固化，
                     // 这里给确定实色，真实颜色由 Icon(tint) 覆盖。

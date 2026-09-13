@@ -44,6 +44,26 @@ enum class TemperatureUnit(val id: String, val label: String, val suffix: String
 }
 
 /**
+ * 主题**风格**（注意：这是与 [ThemeMode] 完全正交的另一个维度）。
+ *
+ * - [ThemeMode] 管「亮还是暗」——系统级配色方案。
+ * - [ThemeStyle] 管「材质长什么样」——浮动层是用实心卡片，还是真玻璃。
+ *
+ * 两者相乘才是最终外观（例如「深色 + 液态玻璃」）。
+ * 之所以分开，是因为用户完全可能想要「浅色 + 默认材质」这种组合，
+ * 如果把它们塞进一个枚举会变成 3×2=6 项的笛卡尔积，无法维护。
+ */
+enum class ThemeStyle(val id: String, val label: String, val subtitle: String) {
+    DEFAULT("default", "默认", "实心卡片，性能最好"),
+    LIQUID_GLASS("liquid_glass", "液态玻璃", "真折射 + 高光，实时渲染");
+
+    companion object {
+        fun fromId(id: String?): ThemeStyle =
+            entries.firstOrNull { it.id == id } ?: DEFAULT
+    }
+}
+
+/**
  * 设置快照：一次性读出全部设置项，供 Compose 渲染。
  *
  * 用不可变 data class 而不是让 UI 直接读 SharedPreferences，
@@ -52,13 +72,15 @@ enum class TemperatureUnit(val id: String, val label: String, val suffix: String
 data class AppSettingsState(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val dynamicColor: Boolean = false,
-    val temperatureUnit: TemperatureUnit = TemperatureUnit.CELSIUS
+    val temperatureUnit: TemperatureUnit = TemperatureUnit.CELSIUS,
+    val themeStyle: ThemeStyle = ThemeStyle.DEFAULT
 )
 
 // ---- SharedPreferences 键名 ----
 private const val KEY_THEME_MODE = "theme_mode"
 private const val KEY_DYNAMIC_COLOR = "dynamic_color"
 private const val KEY_TEMPERATURE_UNIT = "temperature_unit"
+private const val KEY_THEME_STYLE = "theme_style"
 
 /**
  * 读取当前设置。
@@ -74,7 +96,11 @@ fun readAppSettings(context: Context): AppSettingsState {
         // ⚠️ 动态取色默认 false：见 Theme.kt 注释 —— 开了会覆盖本项目
         // 自己调过的配色。这里保持与 Theme 默认值一致。
         dynamicColor = prefs.getBoolean(KEY_DYNAMIC_COLOR, false),
-        temperatureUnit = TemperatureUnit.fromId(prefs.getString(KEY_TEMPERATURE_UNIT, null))
+        temperatureUnit = TemperatureUnit.fromId(prefs.getString(KEY_TEMPERATURE_UNIT, null)),
+        // ⚠️ 液态玻璃默认关闭。它是「重度渲染」选项，默认开启会让
+        // 首次启动的机器（尤其低端）直接掉帧，用户会觉得 App 卡。
+        // 想要的人自己去设置里打开 —— 这是有意的产品取舍。
+        themeStyle = ThemeStyle.fromId(prefs.getString(KEY_THEME_STYLE, null))
     )
 }
 
@@ -104,6 +130,7 @@ fun persistAppSettings(context: Context, state: AppSettingsState) {
         .putString(KEY_THEME_MODE, state.themeMode.id)
         .putBoolean(KEY_DYNAMIC_COLOR, state.dynamicColor)
         .putString(KEY_TEMPERATURE_UNIT, state.temperatureUnit.id)
+        .putString(KEY_THEME_STYLE, state.themeStyle.id)
         .apply()
 }
 
