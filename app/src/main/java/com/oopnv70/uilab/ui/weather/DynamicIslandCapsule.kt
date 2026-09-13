@@ -1,6 +1,7 @@
 package com.oopnv70.uilab.ui.weather
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -14,7 +15,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -66,14 +67,6 @@ import androidx.compose.ui.unit.sp
 /** 收起态高度（小药丸）。 */
 private val CollapsedHeight = 34.dp
 
-/**
- * 收起态宽度。
- * 收起态原本是「按内容自适应」，但那样没法和其他宽度做插值动画
- * （未知值无法参与补间）。这里给一个固定的估算值，
- * 与「城市 + 温度 + 箭头」的实际内容宽度接近，动画才能平滑。
- */
-private val CollapsedWidth = 132.dp
-
 @Composable
 fun DynamicIslandCapsule(
     current: CurrentWeather,
@@ -98,70 +91,67 @@ fun DynamicIslandCapsule(
     // 现在把外框本身也纳入动画：宽度 / 圆角 / 内边距都用动画值驱动，
     // 外框与内容同步平滑变化。
     // ------------------------------------------------------------------
-    // 外框动画统一时长/缓动（Dp 类型的 tween，供 animateDpAsState 使用）
-    val spec = tween<Dp>(320, easing = FastOutSlowInEasing)
+    // 展开/收起的过渡动画
+    //
+    // 之前的坑：手工用 animateDpAsState 插值「宽度」，但收起宽度必须是
+    // 固定值才可插值 —— 结果内容（城市 + 温度 + 箭头）宽度和这个固定值
+    // 对不上：城市名短则右边空一截，温度看着「位置不对」；而且宽度、
+    // 高度、圆角三条动画各自为政，展开时就有撕裂感。
+    //
+    // 现在换成官方的 animateContentSize()：
+    //   - 收起态用 wrapContentWidth()，尺寸完全由内容决定 → 温度永远
+    //     紧跟城市名，位置自然。
+    //   - 展开态切到 fillMaxWidth()，animateContentSize 负责把这次
+    //     尺寸变化（宽 + 高）平滑补间，不再撕裂。
+    //   - 圆角用 animateDpAsState 与尺寸同步过渡。
+    // ------------------------------------------------------------------
+    val corner by animateDpAsState(
+        targetValue = if (expanded) 26.dp else CollapsedHeight / 2,
+        animationSpec = tween(280, easing = FastOutSlowInEasing),
+        label = "islandCorner"
+    )
 
-    BoxWithConstraints(modifier = modifier) {
-        // 展开目标宽度 = 当前可用宽度；收起宽度按内容估算（小药丸）。
-        val expandedWidth = maxWidth
-        val collapsedWidth = CollapsedWidth
+    // 背景渐变：收起时更淡，展开时更饱满
+    val gradient = Brush.linearGradient(
+        colors = if (expanded) {
+            listOf(
+                MaterialTheme.colorScheme.primaryContainer,
+                MaterialTheme.colorScheme.surfaceContainerHigh
+            )
+        } else {
+            listOf(
+                MaterialTheme.colorScheme.surfaceContainerHigh,
+                MaterialTheme.colorScheme.surfaceContainerHigh
+            )
+        }
+    )
 
-        val width by animateDpAsState(
-            targetValue = if (expanded) expandedWidth else collapsedWidth,
-            animationSpec = spec,
-            label = "islandWidth"
-        )
-        val corner by animateDpAsState(
-            targetValue = if (expanded) 26.dp else CollapsedHeight / 2,
-            animationSpec = spec,
-            label = "islandCorner"
-        )
-        val hPadding by animateDpAsState(
-            targetValue = if (expanded) 14.dp else 10.dp,
-            animationSpec = spec,
-            label = "islandPadding"
-        )
-
-        // 背景渐变：收起时更淡，展开时更饱满
-        val gradient = Brush.linearGradient(
-            colors = if (expanded) {
-                listOf(
-                    MaterialTheme.colorScheme.primaryContainer,
-                    MaterialTheme.colorScheme.surfaceContainerHigh
-                )
-            } else {
-                listOf(
-                    MaterialTheme.colorScheme.surfaceContainerHigh,
-                    MaterialTheme.colorScheme.surfaceContainerHigh
-                )
-            }
-        )
-
-        Surface(
-            modifier = Modifier
-                // 宽度用动画值（不再是 if 二选一）
-                .width(width)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onToggle
-                ),
-            // 圆角也用动画值，收起是完整胶囊、展开平滑过渡到圆角矩形
-            shape = RoundedCornerShape(corner),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            tonalElevation = 3.dp,
-            shadowElevation = 5.dp
-        ) {
-            Box(modifier = Modifier.background(gradient)) {
-                Column {
-                    // ---------------- 收起态常驻的一行（小药丸） ----------------
-                    Row(
-                        modifier = Modifier
-                            .height(CollapsedHeight)
-                            // 内边距也走动画，避免展开时文字「跳」一下
-                            .padding(start = hPadding, end = hPadding),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+    Surface(
+        modifier = modifier
+            // 宽度：收起 = 按内容；展开 = 撑满。
+            // 尺寸变化交给 animateContentSize 平滑处理（宽高一起补间）。
+            .then(if (expanded) Modifier.fillMaxWidth() else Modifier.wrapContentWidth())
+            .animateContentSize()
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onToggle
+            ),
+        // 圆角也用动画值，收起是完整胶囊、展开平滑过渡到圆角矩形
+        shape = RoundedCornerShape(corner),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        tonalElevation = 3.dp,
+        shadowElevation = 5.dp
+    ) {
+        Box(modifier = Modifier.background(gradient)) {
+            Column {
+                // ---------------- 收起态常驻的一行（小药丸） ----------------
+                Row(
+                    modifier = Modifier
+                        .height(CollapsedHeight)
+                        .padding(start = 12.dp, end = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     // 天气图标（小）
                     Icon(
                         imageVector = current.condition.icon(
@@ -227,7 +217,6 @@ fun DynamicIslandCapsule(
             }
         }
     }
-}
 }
 
 /** 展开后的详细内容。 */
