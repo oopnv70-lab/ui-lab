@@ -19,7 +19,7 @@ android {
         targetSdk = 37
         versionCode = 1
         // 每次 UI 调整递增，便于确认手机上装的是哪一版构建
-        versionName = "0.3-data"
+        versionName = "0.4-weather-ui"
     }
 
     buildTypes {

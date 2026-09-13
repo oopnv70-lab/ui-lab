@@ -108,7 +108,11 @@ private val DarkScheme = darkColorScheme(
 @Composable
 fun UiLabTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    // ⚠️ 已关闭动态取色。
+    // 原因：动态取色（Monet）会用「壁纸生成的配色」覆盖本文件的基准色，
+    // 导致 Color.kt 里精心调过的「更亮」配色完全失效。
+    // 要恢复动态取色，把这里改成 true 即可。
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {

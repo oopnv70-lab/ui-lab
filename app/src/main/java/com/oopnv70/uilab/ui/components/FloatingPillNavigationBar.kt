@@ -7,8 +7,10 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -31,31 +34,33 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 // =====================================================================
 // 尺寸常量（集中管理，方便整体调节紧凑度）
 // =====================================================================
-/** 胶囊栏高度。 */
-private val BarHeight: Dp = 56.dp
+/** 胶囊栏高度。带文字标签时略高。 */
+private val BarHeight: Dp = 64.dp
 /** 胶囊栏内部左右内边距。 */
 private val BarInnerPadding: Dp = 6.dp
 /** 滑块相对每个格子的水平内缩（左右各一半 → 共 8dp）。 */
 private val IndicatorInset: Dp = 4.dp
 /** 滑块相对栏高的垂直内缩。 */
-private val IndicatorVerticalInset: Dp = 6.dp
+private val IndicatorVerticalInset: Dp = 5.dp
 
 /**
  * 浮动胶囊导航栏（Floating Pill Navigation Bar）。
  *
  * 设计要点：
  *  - **完全胶囊**：圆角 = 高度 / 2，上下两端呈半圆
- *  - **紧凑**：栏高 56dp，内部留白克制
+ *  - **紧凑**：内部留白克制
  *  - **平滑滑动**：选中高亮是一层独立的「滑块」，会从旧位置平滑移动到新位置，
  *    而不是在新位置直接出现（[animateDpAsState] 驱动 `offset`）
- *  - 使用 M3 主题色（配合动态取色）
- *  - 图标 24dp，点击热区高度 = 栏高（≥ 48dp）
+ *  - **图标 + 文字**：文字随选中状态渐变出现，兼顾紧凑与可读
+ *  - 使用 M3 主题色
  *
  * @param items 导航项目列表。
  * @param selectedIndex 当前选中项下标。
@@ -77,10 +82,9 @@ fun FloatingPillNavigationBar(
             .fillMaxWidth()
             .height(BarHeight),
         shape = RoundedCornerShape(BarHeight / 2),   // 完全胶囊
-        // 更亮的容器色：surfaceContainerHigh 明显亮于 surfaceContainer
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         tonalElevation = 2.dp,
-        shadowElevation = 4.dp
+        shadowElevation = 6.dp
     ) {
         BoxWithConstraints(
             modifier = Modifier
@@ -117,7 +121,7 @@ fun FloatingPillNavigationBar(
                     .background(MaterialTheme.colorScheme.secondaryContainer)
             )
 
-            // ---------- 图标层 ----------
+            // ---------- 图标 + 文字层 ----------
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -135,7 +139,7 @@ fun FloatingPillNavigationBar(
     }
 }
 
-/** 单个导航项：只负责「图标 + 点击」，背景由上层滑块统一绘制。 */
+/** 单个导航项：图标 + 文字（文字在选中时更醒目）。 */
 @Composable
 private fun PillNavItem(
     item: NavItem,
@@ -158,7 +162,7 @@ private fun PillNavItem(
 
     // 图标缩放：选中略放大，营造弹性感
     val iconScale by animateFloatAsState(
-        targetValue = if (selected) 1.08f else 1.0f,
+        targetValue = if (selected) 1.06f else 1.0f,
         animationSpec = tween(durationMillis = 300),
         label = "pillIconScale"
     )
@@ -175,18 +179,30 @@ private fun PillNavItem(
             ),
         contentAlignment = Alignment.Center
     ) {
-        Icon(
-            imageVector = item.icon,
-            contentDescription = item.label,
-            modifier = Modifier
-                .size(24.dp)
-                .graphicsLayer {
-                    scaleX = iconScale
-                    scaleY = iconScale
-                },
-            tint = contentColor
-        )
-        // 说明：选项名称暂时不显示，待命名确定后在此追加 Text。
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = item.icon,
+                contentDescription = item.label,
+                modifier = Modifier
+                    .size(22.dp)
+                    .graphicsLayer {
+                        scaleX = iconScale
+                        scaleY = iconScale
+                    },
+                tint = contentColor
+            )
+            Box(modifier = Modifier.height(2.dp))
+            Text(
+                text = item.label,
+                fontSize = 10.sp,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                color = contentColor,
+                maxLines = 1
+            )
+        }
     }
 }
 

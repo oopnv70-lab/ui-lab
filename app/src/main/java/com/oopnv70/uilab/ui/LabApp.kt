@@ -12,58 +12,60 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.BookmarkBorder
-import androidx.compose.material.icons.outlined.Explore
-import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.PersonOutline
-import androidx.compose.material.icons.rounded.Bookmark
-import androidx.compose.material.icons.rounded.Explore
-import androidx.compose.material.icons.rounded.Home
-import androidx.compose.material.icons.rounded.Person
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.oopnv70.uilab.ui.components.FloatingPillNavigationBar
 import com.oopnv70.uilab.ui.components.NavItem
-import com.oopnv70.uilab.ui.screens.PlaceholderScreen
+import com.oopnv70.uilab.ui.weather.CitiesPage
+import com.oopnv70.uilab.ui.weather.DailyPage
+import com.oopnv70.uilab.ui.weather.DynamicIslandCapsule
+import com.oopnv70.uilab.ui.weather.HourlyPage
+import com.oopnv70.uilab.ui.weather.MockWeather
+import com.oopnv70.uilab.ui.weather.OverviewPage
+import com.oopnv70.uilab.ui.weather.WeatherGroup
+import com.oopnv70.uilab.ui.weather.cloudIcon
+import com.oopnv70.uilab.ui.weather.pressureIcon
+import com.oopnv70.uilab.ui.weather.sunIcon
+import com.oopnv70.uilab.ui.weather.sunriseIcon
+import androidx.compose.ui.graphics.Color
 
 /**
- * 导航项定义。
- * 名称（label）暂未最终确定，这里先给出占位名，仅用于无障碍描述；
- * 界面上暂不显示文字。
- */
-private enum class LabTab(
-    val label: String,
-    val selectedIcon: ImageVector,
-    val unselectedIcon: ImageVector
-) {
-    HOME("首页", Icons.Rounded.Home, Icons.Outlined.Home),
-    EXPLORE("发现", Icons.Rounded.Explore, Icons.Outlined.Explore),
-    SAVED("收藏", Icons.Rounded.Bookmark, Icons.Outlined.BookmarkBorder),
-    PROFILE("我的", Icons.Rounded.Person, Icons.Outlined.PersonOutline)
-}
-
-/**
- * 应用主框架：
- *  - 中间是内容区（随 Tab 切换，带淡入淡出过渡）
- *  - 底部是浮动胶囊导航栏（四周留空隙，不贴边、不接地）
+ * 应用主框架（天气版）。
+ *
+ * 结构：
+ *  ┌───────────────────────────────────┐
+ *  │  [灵动岛胶囊]  ← 悬浮在最上层        │  ← 收起/展开
+ *  │                                   │
+ *  │      内容区（4 个天气大类页面）      │  ← 随底部导航切换
+ *  │                                   │
+ *  │  [浮动胶囊导航栏]                  │  ← 概览 / 逐时 / 预报 / 城市
+ *  └───────────────────────────────────┘
+ *
+ * 注意图层顺序：胶囊必须画在内容之后（下层），否则会被内容遮住。
  */
 @Composable
 fun LabApp() {
     var selectedIndex by rememberSaveable { mutableIntStateOf(0) }
-    val tabs = LabTab.entries
+    // 灵动岛是否展开（不跨进程保存，属于「临时 UI 状态」）
+    var islandExpanded by remember { mutableStateOf(false) }
 
-    // 导航栏需要避让系统导航栏（手势条），再额外留出「悬浮空隙」。
-    // 手势导航设备上 navigationBars inset 可能为 0，这里用一个保底值兜住，
-    // 确保胶囊底部始终「悬空」，不会贴到屏幕边缘。
+    val groups = WeatherGroup.entries
+
+    // 系统栏避让
+    val statusBarTop = WindowInsets.statusBars
+        .asPaddingValues()
+        .calculateTopPadding()
     val navBottomInset = WindowInsets.navigationBars
         .asPaddingValues()
         .calculateBottomPadding()
@@ -77,18 +79,17 @@ fun LabApp() {
             transitionSpec = {
                 fadeIn(tween(220)) togetherWith fadeOut(tween(140))
             },
-            label = "tabContent"
+            label = "weatherTabContent"
         ) { index ->
-            PlaceholderScreen(
-                title = tabs[index].label,
-                modifier = Modifier.fillMaxSize()
-            )
+            when (groups[index]) {
+                WeatherGroup.OVERVIEW -> OverviewPage()
+                WeatherGroup.HOURLY -> HourlyPage()
+                WeatherGroup.DAILY -> DailyPage()
+                WeatherGroup.CITIES -> CitiesPage()
+            }
         }
 
-        // ---------- 浮动胶囊导航栏 ----------
-        // 注意：间距必须由「外层容器」提供，不能塞进导航栏组件自己的 modifier。
-        // 否则 Surface 的 shape 裁剪会作用在内缩后的矩形上，圆角会被「拉平」，
-        // 看起来像直角、并且紧贴屏幕。
+        // ---------- 底部：浮动胶囊导航栏 ----------
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -96,17 +97,46 @@ fun LabApp() {
                 .padding(
                     start = 12.dp,
                     end = 12.dp,
-                    // 底部：系统导航栏高度 + 额外悬浮空隙
-                    bottom = navBottomInset + 10.dp
+                    bottom = navBottomInset + 8.dp
                 )
         ) {
             FloatingPillNavigationBar(
-                items = remember {
-                    tabs.map { NavItem(icon = it.selectedIcon, label = it.label) }
-                },
+                items = remember { buildNavItems() },
                 selectedIndex = selectedIndex,
                 onSelect = { selectedIndex = it }
             )
         }
+
+        // ---------- 顶部：灵动岛胶囊（最后画 → 层级最高） ----------
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .padding(
+                    start = 14.dp,
+                    end = 14.dp,
+                    top = statusBarTop + 6.dp
+                )
+        ) {
+            DynamicIslandCapsule(
+                current = MockWeather.current,
+                expanded = islandExpanded,
+                onToggle = { islandExpanded = !islandExpanded }
+            )
+        }
     }
+}
+
+/**
+ * 构建导航项：四个天气大类，使用自绘图标。
+ * 颜色定义为「未选中色」，实际着色由导航栏按选中状态覆盖。
+ */
+private fun buildNavItems(): List<NavItem> {
+    val tint = Color.Unspecified
+    return listOf(
+        NavItem(icon = sunIcon(tint), label = WeatherGroup.OVERVIEW.label),
+        NavItem(icon = sunriseIcon(tint), label = WeatherGroup.HOURLY.label),
+        NavItem(icon = cloudIcon(tint), label = WeatherGroup.DAILY.label),
+        NavItem(icon = pressureIcon(tint), label = WeatherGroup.CITIES.label)
+    )
 }
