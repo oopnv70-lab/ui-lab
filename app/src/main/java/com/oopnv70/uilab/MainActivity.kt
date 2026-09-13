@@ -14,13 +14,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.oopnv70.uilab.data.DependencySelfCheck
+import com.oopnv70.uilab.location.LocateUiState
 import com.oopnv70.uilab.location.LocationPermissionState
+import com.oopnv70.uilab.location.rememberAutoLocation
 import com.oopnv70.uilab.location.rememberLocationPermission
 import com.oopnv70.uilab.ui.LabApp
 import com.oopnv70.uilab.ui.theme.UiLabTheme
 
 class MainActivity : ComponentActivity() {
-
     override fun onCreate(savedInstanceState: Bundle?) {
         // 边到边显示：内容延伸到状态栏/导航栏后面，
         // 浮动胶囊导航栏与灵动岛因此能真正「浮」在内容之上。
@@ -32,33 +33,39 @@ class MainActivity : ComponentActivity() {
         if (BuildConfig.DEBUG) {
             Log.d("UiLab", "serialization self-check -> ${DependencySelfCheck.parseSample()}")
         }
-
         setContent {
             UiLabTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    // ---------- 定位权限申请 ----------
-                    // autoRequest = true：进入 App 时自动弹一次系统权限框。
-                    // 这是天气 App 的标准做法 —— 拿不到位置就没法给天气。
+                    // ================= 定位流水线 =================
+                    // 两步：
+                    //   ① 申请权限（rememberLocationPermission）
+                    //   ② 拿到权限后自动定位（rememberAutoLocation）
                     //
-                    // ⚠️ 申请的是 FINE + COARSE 两个权限：
-                    //    Android 12+ 只有两个一起申请，弹窗里才会出现
-                    //    「精确位置」开关，用户才有机会授权精确位置。
-                    var locationState by remember {
+                    // 以前只有 ①，没有 ② —— 这就是「显示北京」的根因。
+                    var permissionState by remember {
                         mutableStateOf(LocationPermissionState.NOT_REQUESTED)
                     }
 
                     rememberLocationPermission(
                         autoRequest = true,
                         onResult = { state ->
-                            locationState = state
+                            permissionState = state
                         }
                     )
 
+                    // 权限一旦授予，这里会自动发起定位并把城市名传下去。
+                    val locator = rememberAutoLocation(
+                        permissionState = permissionState,
+                        enabled = true
+                    )
+
                     LabApp(
-                        locationPermissionState = locationState
+                        locationPermissionState = permissionState,
+                        locateState = locator.state,
+                        onRetryLocate = locator.refresh
                     )
                 }
             }

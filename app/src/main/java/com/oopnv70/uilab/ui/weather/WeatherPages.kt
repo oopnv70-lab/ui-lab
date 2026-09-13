@@ -25,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -33,7 +34,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.oopnv70.uilab.location.LocateStage
+import com.oopnv70.uilab.location.LocateUiState
 import com.oopnv70.uilab.location.LocationPermissionState
+import com.oopnv70.uilab.location.cityDisplayName
 import com.oopnv70.uilab.location.description
 import com.oopnv70.uilab.location.rememberLocationRequester
 
@@ -123,8 +127,10 @@ private fun SourceTag(source: WeatherSource) {
 // 1. 概览页
 // =====================================================================
 @Composable
-fun OverviewPage(modifier: Modifier = Modifier) {
-    val current = MockWeather.current
+fun OverviewPage(
+    modifier: Modifier = Modifier,
+    current: CurrentWeather = MockWeather.current
+) {
 
     WeatherPageScaffold {
         LazyColumn(
@@ -804,9 +810,14 @@ private fun DailyRangeBars(days: List<DailyPoint>) {
 @Composable
 fun CitiesPage(
     locationPermissionState: LocationPermissionState = LocationPermissionState.NOT_REQUESTED,
+    locateState: LocateUiState = LocateUiState.Idle,
+    onRetryLocate: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val cities = MockWeather.cities
+    // 城市列表：把「当前位置」换成真实定位城市
+    val cities = remember(locateState) {
+        MockWeather.citiesWith(locateState.cityDisplayName)
+    }
     // 手动再次申请定位权限（例如用户第一次点了「不允许」）
     val requestLocation = rememberLocationRequester()
 
@@ -818,11 +829,13 @@ fun CitiesPage(
             ),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // ---------- 定位卡片（真实反映权限状态） ----------
+            // ---------- 定位卡片（权限 + 定位结果） ----------
             item {
                 LocationPermissionCard(
                     state = locationPermissionState,
-                    onRequest = { requestLocation() }
+                    locateState = locateState,
+                    onRequest = { requestLocation() },
+                    onRetry = onRetryLocate
                 )
             }
 
@@ -953,25 +966,31 @@ private fun CityCard(city: CityItem) {
     }
 }
 // =====================================================================
-// 定位权限卡片（城市页顶部）
+// 定位卡片（城市页顶部）：权限状态 + 定位结果
 // =====================================================================
-
 /**
- * 显示当前定位权限状态，并给出可操作按钮。
+ * 显示当前定位权限状态 + 实际定位结果，并给出可操作按钮。
  *
- * 状态 → 呈现：
- *   NOT_REQUESTED        → “申请定位权限”按钮
- *   GRANTED_PRECISE      → 绿点 + “已获得精确位置”
- *   GRANTED_APPROXIMATE  → 黄点 + “仅大致位置” + “重新申请精确”按钮
- *   DENIED               → 红点 + “被拒绝” + “再次申请”按钮
- *   DENIED_PERMANENTLY   → 红点 + “去设置”提示
+ * 权限状态 → 呈现：
+ *   NOT_REQUESTED        → 灰点 + "使用当前位置" + "授权"按钮
+ *   GRANTED_PRECISE      → 绿点 + "已获得精确位置"
+ *   GRANTED_APPROXIMATE  → 黄点 + "仅有大致位置" + "提精确"按钮
+ *   DENIED               → 红点 + "定位权限被拒绝" + "重试"按钮
+ *   DENIED_PERMANENTLY   → 红点 + "去设置"按钮
+ *
+ * 定位结果（locateState）→ 在第二行显示：
+ *   Locating  → "正在定位…"
+ *   Success   → 真实城市名，如"广东省深圳市"
+ *   Failed    → 失败原因 + "重试定位"按钮
  */
 @Composable
 private fun LocationPermissionCard(
     state: LocationPermissionState,
-    onRequest: () -> Unit
+    locateState: LocateUiState,
+    onRequest: () -> Unit,
+    onRetry: () -> Unit
 ) {
-    // 状态对应的颜色与文案
+    // ---------- 权限状态的颜色与文案 ----------
     val dotColor = when (state) {
         LocationPermissionState.GRANTED_PRECISE -> Color(0xFF2E7D32)   // 绿
         LocationPermissionState.GRANTED_APPROXIMATE -> Color(0xFFF9A825) // 黄
@@ -979,71 +998,125 @@ private fun LocationPermissionCard(
         LocationPermissionState.DENIED_PERMANENTLY -> Color(0xFFC62828)  // 红
         LocationPermissionState.NOT_REQUESTED -> MaterialTheme.colorScheme.outline
     }
-
     val title = when (state) {
         LocationPermissionState.NOT_REQUESTED -> "使用当前位置"
-        LocationPermissionState.GRANTED_PRECISE -> "已定位到当前位置"
-        LocationPermissionState.GRANTED_APPROXIMATE -> "仅有大致位置"
+        LocationPermissionState.GRANTED_PRECISE -> "已获得精确定位权限"
+        LocationPermissionState.GRANTED_APPROXIMATE -> "仅获得大致位置权限"
         LocationPermissionState.DENIED -> "定位权限被拒绝"
         LocationPermissionState.DENIED_PERMANENTLY -> "定位权限被永久拒绝"
     }
 
-    WeatherCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                imageVector = locationIcon(MaterialTheme.colorScheme.primary),
-                contentDescription = null,
-                modifier = Modifier.size(20.dp),
-                tint = MaterialTheme.colorScheme.primary
-            )
-            Spacer(Modifier.width(10.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(7.dp)
-                            .clip(RoundedCornerShape(50))
-                            .background(dotColor)
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = state.description(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.outline
-                )
-            }
+    // ---------- 定位结果的副标题 ----------
+    val subtitle = when (locateState) {
+        is LocateUiState.Locating -> when (locateState.stage) {
+            LocateStage.LOCATING -> "正在获取坐标…"
+            LocateStage.REVERSE_GEOCODING -> "正在解析位置…"
+            else -> "正在定位…"
+        }
+        is LocateUiState.Success -> "定位到：${locateState.place.displayName}"
+        is LocateUiState.Failed -> locateState.reason
+        LocateUiState.Idle -> state.description()
+    }
 
-            // 按钮：已拿到精确位置就不显示（没有可点的）
-            if (state != LocationPermissionState.GRANTED_PRECISE) {
+    // 定位是否进行中（决定要不要显示转圈）
+    val busy = locateState is LocateUiState.Locating
+
+    WeatherCard {
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = locationIcon(MaterialTheme.colorScheme.primary),
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
                 Spacer(Modifier.width(10.dp))
-                val buttonText = when (state) {
-                    LocationPermissionState.NOT_REQUESTED -> "授权"
-                    LocationPermissionState.GRANTED_APPROXIMATE -> "提精确"
-                    LocationPermissionState.DENIED -> "重试"
-                    LocationPermissionState.DENIED_PERMANENTLY -> "去设置"
-                    LocationPermissionState.GRANTED_PRECISE -> ""
-                }
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.clickable { onRequest() }
-                ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(dotColor)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    Spacer(Modifier.height(2.dp))
                     Text(
-                        text = buttonText,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 7.dp)
+                        text = subtitle,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (locateState is LocateUiState.Failed) {
+                            Color(0xFFC62828)
+                        } else {
+                            MaterialTheme.colorScheme.outline
+                        }
                     )
+                }
+
+                // ---------- 右侧按钮 ----------
+                Spacer(Modifier.width(10.dp))
+                when {
+                    // 正在定位：显示"定位中"（不可点）
+                    busy -> {
+                        IdleLabel(text = "定位中…")
+                    }
+                    // 定位失败但权限有了：给"重试定位"
+                    locateState is LocateUiState.Failed && state.isGranted -> {
+                        ActionChip(text = "重试定位", onClick = onRetry)
+                    }
+                    // 权限未授予：给"授权/提精确/重试/去设置"
+                    state != LocationPermissionState.GRANTED_PRECISE -> {
+                        val buttonText = when (state) {
+                            LocationPermissionState.NOT_REQUESTED -> "授权"
+                            LocationPermissionState.GRANTED_APPROXIMATE -> "提精确"
+                            LocationPermissionState.DENIED -> "重试"
+                            LocationPermissionState.DENIED_PERMANENTLY -> "去设置"
+                            LocationPermissionState.GRANTED_PRECISE -> ""
+                        }
+                        ActionChip(text = buttonText, onClick = onRequest)
+                    }
+                    // 权限有了、定位也有了：什么都不用点
+                    else -> {
+                        if (locateState is LocateUiState.Success) {
+                            IdleLabel(text = "已定位")
+                        }
+                    }
                 }
             }
         }
     }
+}
+
+/** 可点击的小胶囊按钮。 */
+@Composable
+private fun ActionChip(text: String, onClick: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.clickable { onClick() }
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onPrimary,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 7.dp)
+        )
+    }
+}
+
+/** 不可点击的状态标签。 */
+@Composable
+private fun IdleLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.outline,
+        modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp)
+    )
 }

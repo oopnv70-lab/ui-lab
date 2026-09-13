@@ -127,7 +127,6 @@ data class CityItem(
 // ---------------------------------------------------------------------
 
 object MockWeather {
-
     val current = CurrentWeather(
         city = "北京",
         condition = SkyCondition.PARTLY_CLOUDY,
@@ -137,6 +136,39 @@ object MockWeather {
         low = 18,
         summary = "多云转晴 · 午后体感舒适"
     )
+
+    /**
+     * 把 [cityName] 覆盖到实况数据上。
+     *
+     * 用途：定位成功后，把写死的「北京」替换成真实城市名。
+     * 天气数字暂时仍是假数据 —— 等数据层落地后这里会换成真实源。
+     *
+     * @param cityName 真实城市显示名（如「广东省深圳市」）；null 时原样返回。
+     */
+    fun currentFor(cityName: String?): CurrentWeather =
+        if (cityName.isNullOrBlank()) current else current.copy(city = cityName)
+
+    /**
+     * 城市列表，「当前位置」那一项用真实定位结果替换。
+     *
+     * @param currentCityName 真实城市名；null 时保留原来的占位「北京」。
+     */
+    fun citiesWith(currentCityName: String?): List<CityItem> {
+        val base = cities
+        if (currentCityName.isNullOrBlank()) return base
+        return base.map { item ->
+            if (item.isCurrent) {
+                item.copy(
+                    name = currentCityName,
+                    admin = "",
+                    isCurrent = true
+                )
+            } else {
+                item
+            }
+        }
+    }
+
 
     val metrics: List<WeatherMetric> get() = listOf(
         WeatherMetric(

@@ -38,7 +38,9 @@ import com.oopnv70.uilab.ui.weather.cloudIcon
 import com.oopnv70.uilab.ui.weather.pressureIcon
 import com.oopnv70.uilab.ui.weather.sunIcon
 import com.oopnv70.uilab.ui.weather.sunriseIcon
+import com.oopnv70.uilab.location.LocateUiState
 import com.oopnv70.uilab.location.LocationPermissionState
+import com.oopnv70.uilab.location.cityDisplayName
 import androidx.compose.ui.graphics.Color
 
 /**
@@ -56,16 +58,25 @@ import androidx.compose.ui.graphics.Color
  * 注意图层顺序：胶囊必须画在内容之后（下层），否则会被内容遮住。
  *
  * @param locationPermissionState 定位权限状态（由 MainActivity 申请后传入）。
+ * @param locateState 定位结果状态（拿到真实城市名后用于替换写死数据）。
+ * @param onRetryLocate 手动重新定位的回调。
  */
 @Composable
 fun LabApp(
-    locationPermissionState: LocationPermissionState = LocationPermissionState.NOT_REQUESTED
+    locationPermissionState: LocationPermissionState = LocationPermissionState.NOT_REQUESTED,
+    locateState: LocateUiState = LocateUiState.Idle,
+    onRetryLocate: () -> Unit = {}
 ) {
     var selectedIndex by rememberSaveable { mutableIntStateOf(0) }
     // 灵动岛是否展开（不跨进程保存，属于「临时 UI 状态」）
     var islandExpanded by remember { mutableStateOf(false) }
-
     val groups = WeatherGroup.entries
+
+    // 定位到的真实城市名（成功才有值）
+    val locatedCity = locateState.cityDisplayName
+
+    // 实况数据：把定位城市覆盖到假数据上
+    val currentWeather = remember(locatedCity) { MockWeather.currentFor(locatedCity) }
 
     // 系统栏避让
     val statusBarTop = WindowInsets.statusBars
@@ -75,9 +86,7 @@ fun LabApp(
         .asPaddingValues()
         .calculateBottomPadding()
         .coerceAtLeast(16.dp)
-
     Box(modifier = Modifier.fillMaxSize()) {
-
         // ---------- 内容区 ----------
         AnimatedContent(
             targetState = selectedIndex,
@@ -87,15 +96,16 @@ fun LabApp(
             label = "weatherTabContent"
         ) { index ->
             when (groups[index]) {
-                WeatherGroup.OVERVIEW -> OverviewPage()
+                WeatherGroup.OVERVIEW -> OverviewPage(current = currentWeather)
                 WeatherGroup.HOURLY -> HourlyPage()
                 WeatherGroup.DAILY -> DailyPage()
                 WeatherGroup.CITIES -> CitiesPage(
-                    locationPermissionState = locationPermissionState
+                    locationPermissionState = locationPermissionState,
+                    locateState = locateState,
+                    onRetryLocate = onRetryLocate
                 )
             }
         }
-
         // ---------- 底部：浮动胶囊导航栏 ----------
         Box(
             modifier = Modifier
@@ -113,7 +123,6 @@ fun LabApp(
                 onSelect = { selectedIndex = it }
             )
         }
-
         // ---------- 顶部：灵动岛胶囊（最后画 → 层级最高） ----------
         Box(
             modifier = Modifier
@@ -126,7 +135,7 @@ fun LabApp(
                 )
         ) {
             DynamicIslandCapsule(
-                current = MockWeather.current,
+                current = currentWeather,
                 expanded = islandExpanded,
                 onToggle = { islandExpanded = !islandExpanded }
             )
