@@ -1,6 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- ============ 网络 ============ -->
+    <!-- 获取天气数据必需 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 判断当前是否有网络，用于给出「无网络」提示 -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- ============ 定位 ============ -->
+    <!--
+      同时声明 FINE 与 COARSE：
+      - Android 12 (API 31) 起，系统弹窗会提供「精确位置 / 大致位置」二选一。
+        只有声明了 ACCESS_FINE_LOCATION，弹窗里才会出现「精确位置」开关。
+      - 只声明 COARSE 会导致用户完全没有机会授予精确定位。
+      - 若用户只授予「大致位置」，本应用仍然可用（天气格点为 1~11km，
+        模糊位置完全够用），此时会在界面上如实标注「正在使用大致位置」。
+    -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!-- GPS 硬件不强制要求（模拟器 / 无 GPS 的平板也能安装） -->
+    <uses-feature
+        android:name="android.hardware.location.gps"
+        android:required="false" />
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
