@@ -16,9 +16,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.oopnv70.uilab.data.DependencySelfCheck
-import com.oopnv70.uilab.location.LocateUiState
 import com.oopnv70.uilab.location.LocationPermissionState
-import com.oopnv70.uilab.location.currentLocationPermissionState
+import com.oopnv70.uilab.location.PermissionDiagnostics
+import com.oopnv70.uilab.location.PermissionLog
+import com.oopnv70.uilab.location.currentPermissionDiagnostics
 import com.oopnv70.uilab.location.rememberAutoLocation
 import com.oopnv70.uilab.location.rememberLocationPermission
 import com.oopnv70.uilab.ui.LabApp
@@ -41,6 +42,8 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         resumeTick.value++
+        // 官方要求：每次回到前台都重新读一次系统原始权限值，不做任何缓存假设。
+        PermissionLog.log("onResume", this)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -61,50 +64,51 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     // ================= 定位流水线 =================
-                    // 两步：
-                    //   ① 申请权限（rememberLocationPermission）
-                    //   ② 拿到权限后自动定位（rememberAutoLocation）
+                    // 两步：① 申请权限  ② 拿到权限后自动定位
                     //
-                    // 初值必须由 currentLocationPermissionState() 给出 —— 它带上
-                    // 了持久化的 hasBeenAsked。以前写死 NOT_REQUESTED，导致 App
-                    // 重启后即使系统已"拒绝且不再询问"，界面也显示「授权」，
-                    // 点下去却静默无反应。
-                    var permissionState by remember {
-                        mutableStateOf(currentLocationPermissionState(LocalContext.current))
+                    // ⚠️ v3 关键：这里保存的是【完整诊断快照】而不只是枚举。
+                    //    原因是「系统说已授权、App 说没权限」这类 bug，
+                    //    光看枚举值分不清是「真没权限」还是「权限标记异常」，
+                    //    把 FINE/COARSE 原始值一起带上并显示在界面上，
+                    //    用户截图一次就能确诊，不用再来回猜。
+                    var diag by remember {
+                        mutableStateOf(currentPermissionDiagnostics(LocalContext.current))
                     }
 
-                    // onResume 自增（见 Activity 成员 resumeTick），用来触发回到前台后的重算。
                     val tick = resumeTick.value
                     val context = LocalContext.current
 
-                    // 权限状态由 rememberLocationPermission 内部管理并返回；
-                    // 它已经带上了持久化的 hasBeenAsked（见该函数实现）。
+                    // 权限状态由 rememberLocationPermission 内部管理并返回。
                     val permissionStateFromHook = rememberLocationPermission(
                         autoRequest = true,
                         onResult = { state ->
-                            permissionState = state
+                            // 回调只给枚举，这里补一次完整诊断（含原始值）
+                            diag = currentPermissionDiagnostics(context)
+                            if (diag.state != state) {
+                                Log.w(
+                                    "UiLab.Location",
+                                    "枚举不一致：hook=$state diag=${diag.state}"
+                                )
+                            }
                         }
                     )
 
-                    // 两个触发源合并成一个 effect：
-                    //   - permissionStateFromHook 变化 → 同步（含首次自动申请的结果）
-                    //   - tick 变化（onResume 回到前台）→ 重新读一次（用户可能刚在设置页开了权限）
+                    // 两个触发源合并：
+                    //   - permissionStateFromHook 变化 → 重查诊断
+                    //   - tick 变化（onResume 回到前台）→ 重查诊断
                     LaunchedEffect(permissionStateFromHook, tick) {
-                        permissionState = if (tick == 0) {
-                            permissionStateFromHook
-                        } else {
-                            currentLocationPermissionState(context)
-                        }
+                        diag = currentPermissionDiagnostics(context)
                     }
 
                     // 权限一旦授予，这里会自动发起定位并把城市名传下去。
                     val locator = rememberAutoLocation(
-                        permissionState = permissionState,
+                        permissionState = diag.state,
                         enabled = true
                     )
 
                     LabApp(
-                        locationPermissionState = permissionState,
+                        locationPermissionState = diag.state,
+                        permissionDiagnostics = diag.summary(),
                         locateState = locator.state,
                         onRetryLocate = locator.refresh
                     )

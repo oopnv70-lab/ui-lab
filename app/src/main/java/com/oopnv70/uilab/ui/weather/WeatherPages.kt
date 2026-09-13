@@ -820,6 +820,7 @@ private fun DailyRangeBars(days: List<DailyPoint>) {
  * 城市页：定位 + 城市切换 + 添加/移除城市。
  *
  * @param locationPermissionState 定位权限状态。
+ * @param permissionDiagnostics 权限诊断摘要（原始值 + 判定），显示在定位卡片底部。
  * @param locateState 定位结果。
  * @param selectedCity 当前选中的城市名（受控，提升到 LabApp）。
  * @param onSelectCity 切换到某个城市。
@@ -830,6 +831,7 @@ private fun DailyRangeBars(days: List<DailyPoint>) {
 @Composable
 fun CitiesPage(
     locationPermissionState: LocationPermissionState = LocationPermissionState.NOT_REQUESTED,
+    permissionDiagnostics: String = "",
     locateState: LocateUiState = LocateUiState.Idle,
     cities: List<CityItem> = emptyList(),
     selectedCity: String? = null,
@@ -879,6 +881,7 @@ fun CitiesPage(
                     state = locationPermissionState,
                     locateState = locateState,
                     permanentlyDenied = permanentlyDenied,
+                    diagnostics = permissionDiagnostics,
                     // 分派：永久拒绝 → 去设置页；否则 → 正常弹权限框。
                     // 以前这里两者都调 requestLocation()，导致「去设置」永远打不开。
                     onRequest = {
@@ -1260,6 +1263,9 @@ private fun Badge(text: String, filled: Boolean) {
  *   Locating  → "正在定位…"
  *   Success   → 真实城市名，如"广东省深圳市"
  *   Failed    → 失败原因 + "重试定位"按钮
+ *
+ * @param diagnostics 权限诊断摘要（原始 FINE/COARSE 值 + 判定 + API 级别）。
+ *        非空时在卡片底部显示一行小字，供截图取证。
  */
 @Composable
 private fun LocationPermissionCard(
@@ -1267,7 +1273,8 @@ private fun LocationPermissionCard(
     locateState: LocateUiState,
     onRequest: () -> Unit,
     onRetry: () -> Unit,
-    permanentlyDenied: Boolean = false
+    permanentlyDenied: Boolean = false,
+    diagnostics: String = ""
 ) {
     // ---------- 权限状态的颜色与文案 ----------
     val dotColor = when (state) {
@@ -1371,6 +1378,19 @@ private fun LocationPermissionCard(
                         }
                     }
                 }
+            }
+
+            // ---------- 诊断行（截图取证用） ----------
+            // 这一行只在「权限显示已授予、但定位拿不到」这种诡异组合下出现：
+            // 它能直接告诉我们是系统原始值就是未授予，还是原始值已授予却没生效。
+            if (diagnostics.isNotBlank()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = diagnostics,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         }
     }

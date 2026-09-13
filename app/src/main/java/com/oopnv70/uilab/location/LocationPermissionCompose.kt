@@ -1,9 +1,6 @@
 package com.oopnv70.uilab.location
 
-import android.app.Activity
 import android.content.Context
-import android.content.ContextWrapper
-import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
@@ -17,29 +14,27 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 
 // =====================================================================
-// 定位权限申请：Compose 封装（v2，已修「过一会儿按钮变回授权」bug）
+// 定位权限申请：Compose 封装（v3 —— 修复「已授权却说没权限」）
 // =====================================================================
-// v1 的三个缺陷：
-//   1. hasBeenAsked 存内存 → 进程重启归零 → 状态误判为 NOT_REQUESTED
-//      → 按钮变回「授权」，但系统已「拒绝且不再询问」→ 点了不弹框。
-//   2. 「去设置」按钮其实也调的 requestPermissions()，永远打不开设置页。
-//   3. 从系统设置页开完权限回来，界面不会刷新（要重启 App）。
+// v1 缺陷：
+//   1. hasBeenAsked 存内存 → 进程重启归零 → 状态误判 NOT_REQUESTED。
+//   2. 「去设置」按钮其实也调 requestPermissions()，永远打不开设置页。
+//   3. 从设置页回来界面不刷新。
 //
-// v2 的修法：
-//   1. hasBeenAsked 落 SharedPreferences（见 LocationPermissionStore.kt）。
-//   2. 暴露 openAppSettings()，DENIED_PERMANENTLY 时由 UI 调它。
-//   3. 监听 ON_RESUME，回前台就重算权限状态。
+// v2 修法：
+//   1. hasBeenAsked 落 SharedPreferences。
+//   2. 暴露 openAppSettings()。
+//   3. onResume 重算（由 MainActivity 驱动）。
+//
+// v3 追加（本次修复的重点）：
+//   4. 状态判定改由 currentPermissionDiagnostics() 统一产出：
+//      原始值优先、可显示、可截图。
+//   5. 处理「系统说已授予、但定位仍拿不到」这一分支 ——
+//      高版本（尤其 API 37 的临时权限 / 精确度降级）下，系统权限面板
+//      可能显示「已允许」而实际访问被限制，此时不能干等，要主动给出
+//      「重新申请 / 去设置」两条出路。
+//   6. 每次回到前台自动重新读一次系统原始值（官方要求「每次使用前检查」）。
 // =====================================================================
-
-/** 从任意 Context 里找到宿主 Activity（申请权限必须有 Activity）。 */
-private fun Context.findActivity(): Activity? {
-    var ctx: Context? = this
-    while (ctx is ContextWrapper) {
-        if (ctx is Activity) return ctx
-        ctx = ctx.baseContext
-    }
-    return null
-}
 
 /**
  * 记住（并可选自动申请）定位权限。
@@ -55,41 +50,37 @@ fun rememberLocationPermission(
 ): LocationPermissionState {
     val context = LocalContext.current
 
-    // 当前状态：初始值带上持久化的 hasBeenAsked，避免重启后误判为 NOT_REQUESTED。
+    // 初始状态：直接现查系统原始值 + 持久化标记，不用任何内存态的猜测。
     var state by remember {
-        mutableStateOf(currentLocationPermissionState(context))
+        mutableStateOf(currentPermissionDiagnostics(context).state)
     }
 
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
-        // 结果回来后重算（此时 hasBeenAsked 已在申请时落盘）
-        val newState = currentLocationPermissionState(context)
+        // 结果回来后【重新查系统原始值】（不信回调里的 map，只信系统真值）
+        val newState = currentPermissionDiagnostics(context).state
         state = newState
         onResult(newState)
-        android.util.Log.d(
-            "UiLab.Location",
-            "permission result=$result -> $newState (${newState.description()})"
-        )
+        PermissionLog.log("权限回调", context)
     }
 
     // 自动申请：只在「从未申请过」时触发一次。
     LaunchedEffect(Unit) {
-        val current = currentLocationPermissionState(context)
-        state = current
-        if (autoRequest && current == LocationPermissionState.NOT_REQUESTED) {
+        val current = currentPermissionDiagnostics(context)
+        state = current.state
+        PermissionLog.log("进入页面", context)
+        if (autoRequest && current.state == LocationPermissionState.NOT_REQUESTED) {
             // ⚠️ 关键：申请「之前」就把标记落盘。
-            // 若等回调再写，进程在弹窗期间被杀会丢失标记。
+            // 若等回调再写，进程在弹窗期间被杀（高版本降级精确度会杀进程）会丢标记。
             markLocationPermissionAsked(context)
             launcher.launch(LocationPermissions.REQUEST_ARRAY)
         }
     }
 
-    // 从系统设置页返回时刷新状态：
-    // 这里刻意【不】用 Lifecycle 观察者 —— 新 Compose（BOM 2026.x）里
-    // androidx.compose.ui.platform.LocalLifecycleOwner 已迁移/废弃，
-    // 而项目又没引 lifecycle-runtime-compose，用了会编译失败。
-    // 改由调用方（MainActivity）在 onResume 时重算并回传，零依赖、零风险。
+    // 从系统设置页返回时的刷新：由 MainActivity 的 onResume → resumeTick 驱动，
+    // 这里刻意不用 Lifecycle 观察者（新版 Compose 该 API 已迁移/废弃，
+    // 且项目未引 lifecycle-runtime-compose，用了会编译失败）。
 
     return state
 }
@@ -98,6 +89,10 @@ fun rememberLocationPermission(
  * 手动再次申请（例如用户在「城市」页点了「授权」按钮）。
  *
  * 返回一个无参函数，调用即发起申请。
+ *
+ * ⚠️ v3 变化：申请前会再查一次原始值 —— 如果系统其实已经授权
+ *    （高版本可能界面显示授权但实际受限），就直接把状态刷成真实值，
+ *    不再盲目弹一个「弹不出来」的框。
  */
 @Composable
 fun rememberLocationRequester(
@@ -108,22 +103,26 @@ fun rememberLocationRequester(
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
-        val newState = currentLocationPermissionState(context)
+        val newState = currentPermissionDiagnostics(context).state
         onResult(newState)
-        android.util.Log.d(
-            "UiLab.Location",
-            "manual permission result=$result -> $newState"
-        )
+        PermissionLog.log("手动申请回调", context)
     }
 
     return remember(launcher, context) {
         {
-            // 同样：申请前落盘标记
             markLocationPermissionAsked(context)
             launcher.launch(LocationPermissions.REQUEST_ARRAY)
         }
     }
 }
+
+/**
+ * 刷新当前权限状态（供 Activity onResume / 设置页返回后调用）。
+ *
+ * 官方要求「每次使用需要权限的功能前都重新检查」，所以这里不加任何缓存。
+ */
+fun refreshPermissionState(context: Context): LocationPermissionState =
+    currentPermissionDiagnostics(context).state
 
 /**
  * 判断是否「永久拒绝」（勾了不再询问 / 多次拒绝）。
@@ -132,8 +131,23 @@ fun rememberLocationRequester(
  * 需要 Activity 才能调用 shouldShowRequestPermissionRationale。
  */
 fun isPermanentlyDenied(context: Context, permission: String): Boolean {
-    val activity = context.findActivity() ?: return false
+    val activity = context.findHostActivity() ?: return false
     val granted = ContextCompat.checkSelfPermission(context, permission) ==
-            PackageManager.PERMISSION_GRANTED
+            android.content.pm.PackageManager.PERMISSION_GRANTED
     return !granted && !ActivityCompat.shouldShowRequestPermissionRationale(activity, permission)
+}
+
+/**
+ * 权限诊断日志：把原始值和判定一次性打进 logcat。
+ *
+ * 排查「系统说授权、App 说没权限」时，这是第一手证据。
+ * 标签：UiLab.Location
+ */
+object PermissionLog {
+    private const val TAG = "UiLab.Location"
+
+    fun log(stage: String, context: Context) {
+        val d = currentPermissionDiagnostics(context)
+        android.util.Log.d(TAG, "[$stage] ${d.summary()}")
+    }
 }

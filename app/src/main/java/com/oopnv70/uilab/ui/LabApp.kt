@@ -59,12 +59,15 @@ import androidx.compose.ui.graphics.Color
  * 注意图层顺序：胶囊必须画在内容之后（下层），否则会被内容遮住。
  *
  * @param locationPermissionState 定位权限状态（由 MainActivity 申请后传入）。
+ * @param permissionDiagnostics 权限诊断摘要（原始 FINE/COARSE 值 + 判定），
+ *        显示在界面上供截图取证，排查「系统说已授权、App 说没权限」。
  * @param locateState 定位结果状态（拿到真实城市名后用于替换写死数据）。
  * @param onRetryLocate 手动重新定位的回调。
  */
 @Composable
 fun LabApp(
     locationPermissionState: LocationPermissionState = LocationPermissionState.NOT_REQUESTED,
+    permissionDiagnostics: String = "",
     locateState: LocateUiState = LocateUiState.Idle,
     onRetryLocate: () -> Unit = {}
 ) {
@@ -129,6 +132,7 @@ fun LabApp(
                 WeatherGroup.DAILY -> DailyPage()
                 WeatherGroup.CITIES -> CitiesPage(
                     locationPermissionState = locationPermissionState,
+                    permissionDiagnostics = permissionDiagnostics,
                     locateState = locateState,
                     cities = cities,
                     selectedCity = effectiveCity?.name,

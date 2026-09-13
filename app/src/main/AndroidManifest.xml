@@ -19,6 +19,17 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
+    <!--
+      Android 17 (API 37) 新增：定位按钮（location button）。
+      官方原文：USE_LOCATION_BUTTON "Allows an app use location button,
+      which grants temporary location permission when a user clicks the button."
+
+      为什么声明它：targetSdk=37 且只有「用一次定位」功能的 App，官方
+      政策要求走 location button 这条通道（session-based location）。
+      声明为 normal 权限，不需要运行时申请，预先声明不会影响低版本设备。
+    -->
+    <uses-permission android:name="android.permission.USE_LOCATION_BUTTON" />
+
     <!-- GPS 硬件不强制要求（模拟器 / 无 GPS 的平板也能安装） -->
     <uses-feature
         android:name="android.hardware.location.gps"

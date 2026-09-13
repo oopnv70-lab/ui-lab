@@ -48,12 +48,31 @@ fun markLocationPermissionAsked(context: Context) {
  *
  * 这是 UI 层唯一应该调用的入口 —— 不要再手工传 hasBeenAsked = false，
  * 那正是之前把状态误判成 NOT_REQUESTED 的原因。
+ *
+ * ⚠️ v3 起：本函数只做「原始值 + 标记」的合并，判定优先级永远是
+ *    `checkSelfPermission` 的原始值最高（见 LocationPermission.kt）。
  */
 fun currentLocationPermissionState(context: Context): LocationPermissionState =
     getLocationPermissionState(
         context = context,
         hasBeenAsked = isLocationPermissionAsked(context)
     )
+
+/**
+ * 从任意 Context 里找到宿主 Activity。
+ *
+ * 申请权限、读 shouldShowRequestPermissionRationale 都必须有 Activity。
+ * 本函数被 LocationPermission.kt 与 LocationPermissionCompose.kt 共用，
+ * 所以放在这里（公开，不 private）。
+ */
+fun Context.findHostActivity(): android.app.Activity? {
+    var ctx: Context? = this
+    while (ctx is android.content.ContextWrapper) {
+        if (ctx is android.app.Activity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
+}
 
 /**
  * 跳转到本应用的系统设置页（用于「永久拒绝」后引导用户手动开启权限）。
