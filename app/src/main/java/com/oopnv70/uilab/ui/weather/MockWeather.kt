@@ -119,6 +119,7 @@ data class CityItem(
     val admin: String,
     val temperature: Int,
     val condition: SkyCondition,
+    /** 是否是「定位到的当前位置」。列表里最多一个。 */
     val isCurrent: Boolean = false
 )
 
@@ -147,6 +148,41 @@ object MockWeather {
      */
     fun currentFor(cityName: String?): CurrentWeather =
         if (cityName.isNullOrBlank()) current else current.copy(city = cityName)
+
+    /**
+     * 根据「当前选中城市」生成对应实况。
+     *
+     * 逻辑：
+     *   - [selected] 为 null → 返回默认（北京）
+     *   - 在城市列表里找到同名城市 → 用它的温度/天气构造实况
+     *     （这样切换城市时，胶囊和概览页的数字真的会变）
+     *   - 定位城市不在预置列表里 → 保留温度，只替换城市名
+     *
+     * @param selected 当前选中城市；null 表示用默认。
+     * @param allCities 候选城市列表（含定位城市）。
+     */
+    fun currentForCity(
+        selected: CityItem?,
+        allCities: List<CityItem>
+    ): CurrentWeather {
+        if (selected == null) return current
+        val matched = allCities.firstOrNull { it.name == selected.name }
+        return if (matched != null) {
+            current.copy(
+                city = matched.name,
+                temperature = matched.temperature,
+                condition = matched.condition,
+                // 用温度粗略推体感与高低，保证视觉上自洽
+                feelsLike = matched.temperature - 1,
+                high = matched.temperature + 3,
+                low = matched.temperature - 8,
+                summary = "${matched.condition.label} · ${matched.name}"
+            )
+        } else {
+            // 定位城市（不在预置列表）：只换名字
+            current.copy(city = selected.name, summary = "${current.condition.label} · ${selected.name}")
+        }
+    }
 
     /**
      * 城市列表，「当前位置」那一项用真实定位结果替换。
@@ -271,6 +307,37 @@ object MockWeather {
         CityItem("深圳", "广东省", 30, SkyCondition.PARTLY_CLOUDY, isCurrent = false),
         CityItem("成都", "四川省", 22, SkyCondition.CLOUDY, isCurrent = false),
         CityItem("杭州", "浙江省", 25, SkyCondition.FOG, isCurrent = false)
+    )
+    /**
+     * 可添加的候选城市池（供城市页「添加城市」搜索用）。
+     *
+     * 与 [cities] 的区别：[cities] 是「已上屏」的默认列表，
+     * 这里是「全量可搜索」的池子 —— 用户能从里面挑城市加入列表。
+     */
+    val allCities: List<CityItem> get() = listOf(
+        CityItem("北京", "北京市", 26, SkyCondition.PARTLY_CLOUDY),
+        CityItem("上海", "上海市", 24, SkyCondition.RAIN),
+        CityItem("广州", "广东省", 31, SkyCondition.THUNDER),
+        CityItem("深圳", "广东省", 30, SkyCondition.PARTLY_CLOUDY),
+        CityItem("成都", "四川省", 22, SkyCondition.CLOUDY),
+        CityItem("杭州", "浙江省", 25, SkyCondition.FOG),
+        CityItem("重庆", "重庆市", 29, SkyCondition.CLOUDY),
+        CityItem("武汉", "湖北省", 28, SkyCondition.CLEAR),
+        CityItem("西安", "陕西省", 21, SkyCondition.FOG),
+        CityItem("南京", "江苏省", 26, SkyCondition.PARTLY_CLOUDY),
+        CityItem("天津", "天津市", 25, SkyCondition.CLEAR),
+        CityItem("苏州", "江苏省", 27, SkyCondition.CLOUDY),
+        CityItem("长沙", "湖南省", 30, SkyCondition.THUNDER),
+        CityItem("青岛", "山东省", 24, SkyCondition.FOG),
+        CityItem("厦门", "福建省", 29, SkyCondition.RAIN),
+        CityItem("昆明", "云南省", 20, SkyCondition.CLEAR),
+        CityItem("哈尔滨", "黑龙江省", 15, SkyCondition.CLEAR),
+        CityItem("沈阳", "辽宁省", 19, SkyCondition.CLOUDY),
+        CityItem("郑州", "河南省", 27, SkyCondition.PARTLY_CLOUDY),
+        CityItem("拉萨", "西藏自治区", 16, SkyCondition.CLEAR),
+        CityItem("乌鲁木齐", "新疆维吾尔自治区", 22, SkyCondition.CLEAR),
+        CityItem("香港", "香港特别行政区", 28, SkyCondition.RAIN),
+        CityItem("台北", "台湾省", 27, SkyCondition.CLOUDY)
     )
 
     /** 日出日落（用于概览页底部）。 */

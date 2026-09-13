@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -31,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -807,19 +809,46 @@ private fun DailyRangeBars(days: List<DailyPoint>) {
 // =====================================================================
 // 4. 城市页
 // =====================================================================
+/**
+ * 城市页：定位 + 城市切换 + 添加/移除城市。
+ *
+ * @param locationPermissionState 定位权限状态。
+ * @param locateState 定位结果。
+ * @param selectedCity 当前选中的城市名（受控，提升到 LabApp）。
+ * @param onSelectCity 切换到某个城市。
+ * @param onAddCity 添加一个城市（传入城市名）。
+ * @param onRemoveCity 移除一个城市。
+ * @param onRetryLocate 重新定位。
+ */
 @Composable
 fun CitiesPage(
     locationPermissionState: LocationPermissionState = LocationPermissionState.NOT_REQUESTED,
     locateState: LocateUiState = LocateUiState.Idle,
+    cities: List<CityItem> = emptyList(),
+    selectedCity: String? = null,
+    onSelectCity: (CityItem) -> Unit = {},
+    onAddCity: (CityItem) -> Unit = {},
+    onRemoveCity: (CityItem) -> Unit = {},
     onRetryLocate: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    // 城市列表：把「当前位置」换成真实定位城市
-    val cities = remember(locateState) {
-        MockWeather.citiesWith(locateState.cityDisplayName)
-    }
     // 手动再次申请定位权限（例如用户第一次点了「不允许」）
     val requestLocation = rememberLocationRequester()
+
+    // ---- 搜索/添加 面板开关 ----
+    var showAddSheet by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+
+    // 可添加的城市 = 全部城市 - 已在列表里的
+    val addable = remember(cities, query) {
+        MockWeather.allCities
+            .filter { candidate -> cities.none { it.name == candidate.name } }
+            .filter { candidate ->
+                query.isBlank() ||
+                        candidate.name.contains(query, ignoreCase = true) ||
+                        candidate.admin.contains(query, ignoreCase = true)
+            }
+    }
 
     WeatherPageScaffold {
         LazyColumn(
@@ -839,13 +868,14 @@ fun CitiesPage(
                 )
             }
 
+            // ---------- 标题行 + "添加城市"按钮 ----------
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "已添加城市",
+                        text = "我的城市",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface
@@ -856,13 +886,172 @@ fun CitiesPage(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.outline
                     )
+                    Spacer(Modifier.width(10.dp))
+                    // 添加城市
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.clickable { showAddSheet = !showAddSheet }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = plusIcon(MaterialTheme.colorScheme.onPrimary),
+                                contentDescription = null,
+                                modifier = Modifier.size(13.dp),
+                                tint = MaterialTheme.colorScheme.onPrimary
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                text = "添加",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                        }
+                    }
                 }
             }
 
-            itemsIndexed(cities) { _, city ->
-                CityCard(city = city)
+            // ---------- 添加城市面板（可折叠） ----------
+            if (showAddSheet) {
+                item {
+                    WeatherCard {
+                        Column {
+                            SectionTitle("添加城市")
+                            Spacer(Modifier.height(10.dp))
+                            // 搜索框
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainerHighest
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = searchIcon(MaterialTheme.colorScheme.outline),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(15.dp),
+                                        tint = MaterialTheme.colorScheme.outline
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    BasicTextField(
+                                        value = query,
+                                        onValueChange = { query = it },
+                                        singleLine = true,
+                                        textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        ),
+                                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                                        modifier = Modifier.weight(1f),
+                                        decorationBox = { inner ->
+                                            if (query.isEmpty()) {
+                                                Text(
+                                                    text = "搜索城市名，如「深圳」",
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    color = MaterialTheme.colorScheme.outline
+                                                )
+                                            }
+                                            inner()
+                                        }
+                                    )
+                                    if (query.isNotEmpty()) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(20.dp)
+                                                .clickable { query = "" },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = closeIcon(MaterialTheme.colorScheme.outline),
+                                                contentDescription = "清空",
+                                                modifier = Modifier.size(12.dp),
+                                                tint = MaterialTheme.colorScheme.outline
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(10.dp))
+
+                            if (addable.isEmpty()) {
+                                Text(
+                                    text = if (query.isBlank()) "已经添加了全部城市" else "没有匹配的城市",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.outline,
+                                    modifier = Modifier.padding(vertical = 8.dp)
+                                )
+                            } else {
+                                addable.forEach { candidate ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .clickable {
+                                                onAddCity(candidate)
+                                                // 添加后自动切换到它
+                                                onSelectCity(candidate)
+                                                query = ""
+                                                showAddSheet = false
+                                            }
+                                            .padding(vertical = 10.dp, horizontal = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = plusIcon(MaterialTheme.colorScheme.primary),
+                                            contentDescription = null,
+                                            modifier = Modifier.size(15.dp),
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(Modifier.width(10.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = candidate.name,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            if (candidate.admin.isNotBlank()) {
+                                                Text(
+                                                    text = candidate.admin,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.outline
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            text = "${candidate.temperature}°",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
+            // ---------- 城市卡片列表 ----------
+            itemsIndexed(cities) { _, city ->
+                val isSelected = selectedCity == null
+                        ? city.isCurrent
+                        : city.name == selectedCity
+                CityCard(
+                    city = city,
+                    selected = isSelected,
+                    onSelect = { onSelectCity(city) },
+                    // 定位城市不允许移除（去掉它就没有"我在这"了）
+                    onDelete = if (city.isCurrent) null else {
+                        { onRemoveCity(city) }
+                    }
+                )
+            }
+
+            // ---------- 数据来源 ----------
             item {
                 WeatherCard {
                     Column {
@@ -900,22 +1089,43 @@ fun CitiesPage(
     }
 }
 
-/** 城市卡片。 */
+/**
+ * 城市卡片。
+ *
+ * @param city 城市数据。
+ * @param selected 是否是「当前选中」的城市（点击后会高亮 + 显示对勾）。
+ * @param onSelect 点击卡片 → 切换到该城市。
+ * @param onDelete 点击右侧 × → 从列表移除（定位城市不可删）。
+ */
 @Composable
-private fun CityCard(city: CityItem) {
+private fun CityCard(
+    city: CityItem,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    onDelete: (() -> Unit)? = null
+) {
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onSelect() },
         shape = RoundedCornerShape(20.dp),
-        color = if (city.isCurrent) {
-            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
-        } else {
-            MaterialTheme.colorScheme.surfaceContainerHigh
+        color = when {
+            selected -> MaterialTheme.colorScheme.primaryContainer
+            city.isCurrent -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+            else -> MaterialTheme.colorScheme.surfaceContainerHigh
         },
+        // 选中态额外加一圈描边，避免只靠颜色区分（无障碍友好）
+        border = if (selected) {
+            androidx.compose.foundation.BorderStroke(
+                1.5.dp,
+                MaterialTheme.colorScheme.primary
+            )
+        } else null,
         tonalElevation = 1.dp,
-        shadowElevation = 2.dp
+        shadowElevation = if (selected) 4.dp else 2.dp
     ) {
         Row(
-            modifier = Modifier.padding(18.dp),
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
@@ -923,30 +1133,26 @@ private fun CityCard(city: CityItem) {
                     Text(
                         text = city.name,
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     if (city.isCurrent) {
                         Spacer(Modifier.width(8.dp))
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = MaterialTheme.colorScheme.primary
-                        ) {
-                            Text(
-                                text = "当前",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                            )
-                        }
+                        Badge(text = "定位", filled = false)
+                    }
+                    if (selected) {
+                        Spacer(Modifier.width(8.dp))
+                        Badge(text = "当前", filled = true)
                     }
                 }
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = city.admin,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                if (city.admin.isNotBlank()) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = city.admin,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
             Icon(
@@ -962,9 +1168,53 @@ private fun CityCard(city: CityItem) {
                 fontWeight = FontWeight.Light,
                 color = MaterialTheme.colorScheme.onSurface
             )
+
+            // 删除按钮：定位城市不给删
+            if (onDelete != null) {
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(RoundedCornerShape(50))
+                        .clickable { onDelete() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = closeIcon(MaterialTheme.colorScheme.outline),
+                        contentDescription = "移除",
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.outline
+                    )
+                }
+            }
         }
     }
 }
+
+/** 小徽标（"定位" / "当前"）。 */
+@Composable
+private fun Badge(text: String, filled: Boolean) {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = if (filled) {
+            MaterialTheme.colorScheme.primary
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerHighest
+        }
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (filled) {
+                MaterialTheme.colorScheme.onPrimary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+        )
+    }
+}
+
 // =====================================================================
 // 定位卡片（城市页顶部）：权限状态 + 定位结果
 // =====================================================================

@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import com.oopnv70.uilab.ui.components.FloatingPillNavigationBar
 import com.oopnv70.uilab.ui.components.NavItem
 import com.oopnv70.uilab.ui.weather.CitiesPage
+import com.oopnv70.uilab.ui.weather.CityItem
 import com.oopnv70.uilab.ui.weather.DailyPage
 import com.oopnv70.uilab.ui.weather.DynamicIslandCapsule
 import com.oopnv70.uilab.ui.weather.HourlyPage
@@ -75,8 +76,35 @@ fun LabApp(
     // 定位到的真实城市名（成功才有值）
     val locatedCity = locateState.cityDisplayName
 
-    // 实况数据：把定位城市覆盖到假数据上
-    val currentWeather = remember(locatedCity) { MockWeather.currentFor(locatedCity) }
+    // ---- 城市管理状态（提升到这里，CitiesPage 只负责渲染） ----
+    // 注意：用 remember 而非 rememberSaveable —— List<String> 的默认实现
+    // （Arrays$ArrayList / EmptyList）不是 Serializable，存 Bundle 会崩。
+    // 城市选择属于临时 UI 状态，不需要跨进程恢复。
+    var extraCityNames by remember { mutableStateOf(listOf<String>()) }
+    var removedCityNames by remember { mutableStateOf(listOf<String>()) }
+    var selectedCityName by remember { mutableStateOf<String?>(null) }
+
+    // 完整城市列表 = 默认列表（定位城市替换为真实名） - 用户删掉的 + 用户添加的
+    val cities: List<CityItem> = remember(locatedCity, extraCityNames, removedCityNames) {
+        val base = MockWeather.citiesWith(locatedCity)
+            .filter { it.name !in removedCityNames }
+        val extras = extraCityNames.mapNotNull { name ->
+            MockWeather.allCities.firstOrNull { it.name == name }
+        }
+        base + extras
+    }
+
+    // 当前生效的城市对象：优先「用户手动选中」，否则「定位城市」，再否则列表第一项
+    val effectiveCity: CityItem? = remember(cities, selectedCityName, locatedCity) {
+        cities.firstOrNull { it.name == selectedCityName }
+            ?: cities.firstOrNull { it.isCurrent }
+            ?: cities.firstOrNull()
+    }
+
+    // 实况数据：跟随当前生效的城市（切换城市时温度/天气真的会变）
+    val currentWeather = remember(effectiveCity, cities) {
+        MockWeather.currentForCity(effectiveCity, cities)
+    }
 
     // 系统栏避让
     val statusBarTop = WindowInsets.statusBars
@@ -102,6 +130,26 @@ fun LabApp(
                 WeatherGroup.CITIES -> CitiesPage(
                     locationPermissionState = locationPermissionState,
                     locateState = locateState,
+                    cities = cities,
+                    selectedCity = effectiveCity?.name,
+                    onSelectCity = { city -> selectedCityName = city.name },
+                    onAddCity = { city ->
+                        if (city.name !in extraCityNames && city.name !in removedCityNames) {
+                            extraCityNames = extraCityNames + city.name
+                        } else if (city.name in removedCityNames) {
+                            // 被删过的默认城市，重新加回来
+                            removedCityNames = removedCityNames - city.name
+                        }
+                    },
+                    onRemoveCity = { city ->
+                        if (city.name in extraCityNames) {
+                            extraCityNames = extraCityNames - city.name
+                        } else {
+                            removedCityNames = removedCityNames + city.name
+                        }
+                        // 如果删掉的正是当前选中项，回退到跟随定位
+                        if (selectedCityName == city.name) selectedCityName = null
+                    },
                     onRetryLocate = onRetryLocate
                 )
             }

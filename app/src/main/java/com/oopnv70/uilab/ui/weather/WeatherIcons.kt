@@ -257,3 +257,50 @@ fun locationIcon(tint: Color): ImageVector =
         arcToRelative(2.6f, 2.6f, 0f, true, true, 0f, -5.2f)
         close()
     }
+
+// ---------------------------------------------------------------------
+// 13. 关闭（×）—— 用于"移除城市"
+// ---------------------------------------------------------------------
+fun closeIcon(tint: Color): ImageVector =
+    strokeIcon("weather_close", tint) {
+        moveTo(6.5f, 6.5f)
+        lineTo(17.5f, 17.5f)
+        moveTo(17.5f, 6.5f)
+        lineTo(6.5f, 17.5f)
+    }
+
+// ---------------------------------------------------------------------
+// 14. 加号（+）—— 用于"添加城市"
+// ---------------------------------------------------------------------
+fun plusIcon(tint: Color): ImageVector =
+    strokeIcon("weather_plus", tint) {
+        moveTo(12f, 5.5f)
+        lineTo(12f, 18.5f)
+        moveTo(5.5f, 12f)
+        lineTo(18.5f, 12f)
+    }
+
+// ---------------------------------------------------------------------
+// 15. 搜索（放大镜）—— 用于"搜索城市"
+// ---------------------------------------------------------------------
+fun searchIcon(tint: Color): ImageVector =
+    strokeIcon("weather_search", tint) {
+        // 镜圈
+        moveTo(11f, 18f)
+        arcToRelative(7f, 7f, 0f, true, true, 0f, -14f)
+        arcToRelative(7f, 7f, 0f, true, true, 0f, 14f)
+        close()
+        // 手柄
+        moveTo(16.2f, 16.2f)
+        lineTo(20.5f, 20.5f)
+    }
+
+// ---------------------------------------------------------------------
+// 16. 对勾（✓）—— 用于"已选中"
+// ---------------------------------------------------------------------
+fun checkIcon(tint: Color): ImageVector =
+    strokeIcon("weather_check", tint) {
+        moveTo(5.5f, 12.5f)
+        lineTo(10f, 17f)
+        lineTo(18.5f, 7.5f)
+    }
