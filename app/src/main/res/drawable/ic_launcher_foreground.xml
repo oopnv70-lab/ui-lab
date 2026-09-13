@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自适应图标前景：居中一个简洁的圆角方形轮廓，符合 M3 视觉语言 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="0.5"
+        android:scaleY="0.5"
+        android:translateX="27"
+        android:translateY="27">
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M20,14h68a6,6 0 0 1 6,6v68a6,6 0 0 1 -6,6h-68a6,6 0 0 1 -6,-6v-68a6,6 0 0 1 6,-6z" />
+        <path
+            android:fillColor="#415F91"
+            android:pathData="M28,32h52v6h-52z" />
+        <path
+            android:fillColor="#415F91"
+            android:pathData="M28,50h52v6h-52z" />
+        <path
+            android:fillColor="#415F91"
+            android:pathData="M28,68h32v6h-32z" />
+    </group>
+</vector>
