@@ -231,7 +231,7 @@ private fun SettingsTopBar(topPadding: androidx.compose.ui.unit.Dp, onClose: () 
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = closeIcon(strokeColor()),
+                imageVector = mdiClose(strokeColor()),
                 contentDescription = "关闭设置",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(20.dp)
