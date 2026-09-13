@@ -17,16 +17,18 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 
 // =====================================================================
-// 定位权限申请：Compose 封装
+// 定位权限申请：Compose 封装（v2，已修「过一会儿按钮变回授权」bug）
 // =====================================================================
-// 用法（在 MainActivity 的 setContent 里）：
+// v1 的三个缺陷：
+//   1. hasBeenAsked 存内存 → 进程重启归零 → 状态误判为 NOT_REQUESTED
+//      → 按钮变回「授权」，但系统已「拒绝且不再询问」→ 点了不弹框。
+//   2. 「去设置」按钮其实也调的 requestPermissions()，永远打不开设置页。
+//   3. 从系统设置页开完权限回来，界面不会刷新（要重启 App）。
 //
-//     val state = rememberLocationPermission(autoRequest = true) { granted ->
-//         // 回调：用户做完选择后触发
-//     }
-//
-// autoRequest = true 时，进入界面会【自动弹一次】系统权限框。
-// 这是天气 App 的常见做法（打开就问位置，否则没法给天气）。
+// v2 的修法：
+//   1. hasBeenAsked 落 SharedPreferences（见 LocationPermissionStore.kt）。
+//   2. 暴露 openAppSettings()，DENIED_PERMANENTLY 时由 UI 调它。
+//   3. 监听 ON_RESUME，回前台就重算权限状态。
 // =====================================================================
 
 /** 从任意 Context 里找到宿主 Activity（申请权限必须有 Activity）。 */
@@ -52,26 +54,19 @@ fun rememberLocationPermission(
     onResult: (LocationPermissionState) -> Unit = {}
 ): LocationPermissionState {
     val context = LocalContext.current
-    // 记录「是否申请过」。真实项目应持久化到 DataStore，
-    // 这里用内存状态即可满足当前阶段（重进 App 会重新询问，符合直觉）。
-    var hasBeenAsked by remember { mutableStateOf(false) }
 
-    // 当前状态
+    // 当前状态：初始值带上持久化的 hasBeenAsked，避免重启后误判为 NOT_REQUESTED。
     var state by remember {
-        mutableStateOf(
-            getLocationPermissionState(context, hasBeenAsked = false)
-        )
+        mutableStateOf(currentLocationPermissionState(context))
     }
 
-    // 结果回调
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
-        hasBeenAsked = true
-        val newState = getLocationPermissionState(context, hasBeenAsked = true)
+        // 结果回来后重算（此时 hasBeenAsked 已在申请时落盘）
+        val newState = currentLocationPermissionState(context)
         state = newState
         onResult(newState)
-        // 调试日志：结果里 FINE / COARSE 各自的授权情况
         android.util.Log.d(
             "UiLab.Location",
             "permission result=$result -> $newState (${newState.description()})"
@@ -79,21 +74,28 @@ fun rememberLocationPermission(
     }
 
     // 自动申请：只在「从未申请过」时触发一次。
-    // 用 LaunchedEffect(Unit) 保证整个界面生命周期内只跑一次，
-    // 避免重组时反复弹窗（那会很烦人）。
     LaunchedEffect(Unit) {
-        val current = getLocationPermissionState(context, hasBeenAsked = false)
+        val current = currentLocationPermissionState(context)
         state = current
         if (autoRequest && current == LocationPermissionState.NOT_REQUESTED) {
+            // ⚠️ 关键：申请「之前」就把标记落盘。
+            // 若等回调再写，进程在弹窗期间被杀会丢失标记。
+            markLocationPermissionAsked(context)
             launcher.launch(LocationPermissions.REQUEST_ARRAY)
         }
     }
+
+    // 从系统设置页返回时刷新状态：
+    // 这里刻意【不】用 Lifecycle 观察者 —— 新 Compose（BOM 2026.x）里
+    // androidx.compose.ui.platform.LocalLifecycleOwner 已迁移/废弃，
+    // 而项目又没引 lifecycle-runtime-compose，用了会编译失败。
+    // 改由调用方（MainActivity）在 onResume 时重算并回传，零依赖、零风险。
 
     return state
 }
 
 /**
- * 手动再次申请（例如用户在「城市」页点了「定位」按钮）。
+ * 手动再次申请（例如用户在「城市」页点了「授权」按钮）。
  *
  * 返回一个无参函数，调用即发起申请。
  */
@@ -106,7 +108,7 @@ fun rememberLocationRequester(
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
-        val newState = getLocationPermissionState(context, hasBeenAsked = true)
+        val newState = currentLocationPermissionState(context)
         onResult(newState)
         android.util.Log.d(
             "UiLab.Location",
@@ -114,16 +116,19 @@ fun rememberLocationRequester(
         )
     }
 
-    return remember(launcher) {
+    return remember(launcher, context) {
         {
+            // 同样：申请前落盘标记
+            markLocationPermissionAsked(context)
             launcher.launch(LocationPermissions.REQUEST_ARRAY)
         }
     }
 }
 
 /**
- * 判断是否「永久拒绝」（勾了不再询问）。
- * 永久拒绝时，再申请系统会静默返回 denied，必须先引导用户去设置页。
+ * 判断是否「永久拒绝」（勾了不再询问 / 多次拒绝）。
+ *
+ * 永久拒绝时再申请系统会静默返回 denied，必须先引导用户去设置页。
  * 需要 Activity 才能调用 shouldShowRequestPermissionRationale。
  */
 fun isPermanentlyDenied(context: Context, permission: String): Boolean {

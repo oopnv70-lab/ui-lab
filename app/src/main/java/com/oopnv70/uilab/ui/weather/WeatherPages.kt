@@ -36,14 +36,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.oopnv70.uilab.location.LocateStage
 import com.oopnv70.uilab.location.LocateUiState
 import com.oopnv70.uilab.location.LocationPermissionState
+import com.oopnv70.uilab.location.LocationPermissions
 import com.oopnv70.uilab.location.cityDisplayName
 import com.oopnv70.uilab.location.description
+import com.oopnv70.uilab.location.isPermanentlyDenied
+import com.oopnv70.uilab.location.openAppSettings
 import com.oopnv70.uilab.location.rememberLocationRequester
 
 // =====================================================================
@@ -837,6 +841,14 @@ fun CitiesPage(
 ) {
     // 手动再次申请定位权限（例如用户第一次点了「不允许」）
     val requestLocation = rememberLocationRequester()
+    // 永久拒绝时只能去系统设置页手动开（requestPermissions 已不弹框）
+    val context = LocalContext.current
+    // 实时判断：系统层面的「拒绝且不再询问」。
+    // 状态枚举里的 DENIED_PERMANENTLY 只有在 api 层能拿到 rationale 时才准，
+    // 这里再用 shouldShowRequestPermissionRationale 兜一道底。
+    val permanentlyDenied = remember(locationPermissionState) {
+        !locationPermissionState.isGranted && isPermanentlyDenied(context, LocationPermissions.FINE)
+    }
 
     // ---- 搜索/添加 面板开关 ----
     var showAddSheet by remember { mutableStateOf(false) }
@@ -866,7 +878,18 @@ fun CitiesPage(
                 LocationPermissionCard(
                     state = locationPermissionState,
                     locateState = locateState,
-                    onRequest = { requestLocation() },
+                    permanentlyDenied = permanentlyDenied,
+                    // 分派：永久拒绝 → 去设置页；否则 → 正常弹权限框。
+                    // 以前这里两者都调 requestLocation()，导致「去设置」永远打不开。
+                    onRequest = {
+                        if (permanentlyDenied ||
+                            locationPermissionState == LocationPermissionState.DENIED_PERMANENTLY
+                        ) {
+                            openAppSettings(context)
+                        } else {
+                            requestLocation()
+                        }
+                    },
                     onRetry = onRetryLocate
                 )
             }
@@ -1243,7 +1266,8 @@ private fun LocationPermissionCard(
     state: LocationPermissionState,
     locateState: LocateUiState,
     onRequest: () -> Unit,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    permanentlyDenied: Boolean = false
 ) {
     // ---------- 权限状态的颜色与文案 ----------
     val dotColor = when (state) {
@@ -1253,12 +1277,14 @@ private fun LocationPermissionCard(
         LocationPermissionState.DENIED_PERMANENTLY -> Color(0xFFC62828)  // 红
         LocationPermissionState.NOT_REQUESTED -> MaterialTheme.colorScheme.outline
     }
-    val title = when (state) {
-        LocationPermissionState.NOT_REQUESTED -> "使用当前位置"
-        LocationPermissionState.GRANTED_PRECISE -> "已获得精确定位权限"
-        LocationPermissionState.GRANTED_APPROXIMATE -> "仅获得大致位置权限"
-        LocationPermissionState.DENIED -> "定位权限被拒绝"
-        LocationPermissionState.DENIED_PERMANENTLY -> "定位权限被永久拒绝"
+    val title = when {
+        // 实时判断优先：系统层面"拒绝且不再询问"时，明确告诉用户要去设置
+        permanentlyDenied && !state.isGranted -> "定位权限被永久拒绝"
+        state == LocationPermissionState.NOT_REQUESTED -> "使用当前位置"
+        state == LocationPermissionState.GRANTED_PRECISE -> "已获得精确定位权限"
+        state == LocationPermissionState.GRANTED_APPROXIMATE -> "仅获得大致位置权限"
+        state == LocationPermissionState.DENIED -> "定位权限被拒绝"
+        else -> "定位权限被永久拒绝"
     }
 
     // ---------- 定位结果的副标题 ----------
@@ -1327,12 +1353,14 @@ private fun LocationPermissionCard(
                     }
                     // 权限未授予：给"授权/提精确/重试/去设置"
                     state != LocationPermissionState.GRANTED_PRECISE -> {
-                        val buttonText = when (state) {
-                            LocationPermissionState.NOT_REQUESTED -> "授权"
-                            LocationPermissionState.GRANTED_APPROXIMATE -> "提精确"
-                            LocationPermissionState.DENIED -> "重试"
-                            LocationPermissionState.DENIED_PERMANENTLY -> "去设置"
-                            LocationPermissionState.GRANTED_PRECISE -> ""
+                        val buttonText = when {
+                            // 永久拒绝 → 去设置页（点下去真的会跳设置）
+                            permanentlyDenied -> "去设置"
+                            state == LocationPermissionState.NOT_REQUESTED -> "授权"
+                            state == LocationPermissionState.GRANTED_APPROXIMATE -> "提精确"
+                            state == LocationPermissionState.DENIED -> "重试"
+                            state == LocationPermissionState.DENIED_PERMANENTLY -> "去设置"
+                            else -> ""
                         }
                         ActionChip(text = buttonText, onClick = onRequest)
                     }
