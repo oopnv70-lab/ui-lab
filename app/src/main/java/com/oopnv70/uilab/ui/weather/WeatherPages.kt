@@ -1,6 +1,7 @@
 package com.oopnv70.uilab.ui.weather
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,6 +33,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.oopnv70.uilab.location.LocationPermissionState
+import com.oopnv70.uilab.location.description
+import com.oopnv70.uilab.location.rememberLocationRequester
 
 // =====================================================================
 // 四个天气大类页面
@@ -798,8 +802,13 @@ private fun DailyRangeBars(days: List<DailyPoint>) {
 // 4. 城市页
 // =====================================================================
 @Composable
-fun CitiesPage(modifier: Modifier = Modifier) {
+fun CitiesPage(
+    locationPermissionState: LocationPermissionState = LocationPermissionState.NOT_REQUESTED,
+    modifier: Modifier = Modifier
+) {
     val cities = MockWeather.cities
+    // 手动再次申请定位权限（例如用户第一次点了「不允许」）
+    val requestLocation = rememberLocationRequester()
 
     WeatherPageScaffold {
         LazyColumn(
@@ -809,43 +818,12 @@ fun CitiesPage(modifier: Modifier = Modifier) {
             ),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // ---------- 定位卡片（真实反映权限状态） ----------
             item {
-                WeatherCard {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = locationIcon(MaterialTheme.colorScheme.primary),
-                            contentDescription = null,
-                            modifier = Modifier.size(20.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Column {
-                            Text(
-                                text = "使用当前位置",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Text(
-                                text = "需要精确位置权限",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.outline
-                            )
-                        }
-                        Spacer(Modifier.weight(1f))
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = MaterialTheme.colorScheme.primary
-                        ) {
-                            Text(
-                                text = "定位",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 7.dp)
-                            )
-                        }
-                    }
-                }
+                LocationPermissionCard(
+                    state = locationPermissionState,
+                    onRequest = { requestLocation() }
+                )
             }
 
             item {
@@ -971,6 +949,101 @@ private fun CityCard(city: CityItem) {
                 fontWeight = FontWeight.Light,
                 color = MaterialTheme.colorScheme.onSurface
             )
+        }
+    }
+}
+// =====================================================================
+// 定位权限卡片（城市页顶部）
+// =====================================================================
+
+/**
+ * 显示当前定位权限状态，并给出可操作按钮。
+ *
+ * 状态 → 呈现：
+ *   NOT_REQUESTED        → “申请定位权限”按钮
+ *   GRANTED_PRECISE      → 绿点 + “已获得精确位置”
+ *   GRANTED_APPROXIMATE  → 黄点 + “仅大致位置” + “重新申请精确”按钮
+ *   DENIED               → 红点 + “被拒绝” + “再次申请”按钮
+ *   DENIED_PERMANENTLY   → 红点 + “去设置”提示
+ */
+@Composable
+private fun LocationPermissionCard(
+    state: LocationPermissionState,
+    onRequest: () -> Unit
+) {
+    // 状态对应的颜色与文案
+    val dotColor = when (state) {
+        LocationPermissionState.GRANTED_PRECISE -> Color(0xFF2E7D32)   // 绿
+        LocationPermissionState.GRANTED_APPROXIMATE -> Color(0xFFF9A825) // 黄
+        LocationPermissionState.DENIED,
+        LocationPermissionState.DENIED_PERMANENTLY -> Color(0xFFC62828)  // 红
+        LocationPermissionState.NOT_REQUESTED -> MaterialTheme.colorScheme.outline
+    }
+
+    val title = when (state) {
+        LocationPermissionState.NOT_REQUESTED -> "使用当前位置"
+        LocationPermissionState.GRANTED_PRECISE -> "已定位到当前位置"
+        LocationPermissionState.GRANTED_APPROXIMATE -> "仅有大致位置"
+        LocationPermissionState.DENIED -> "定位权限被拒绝"
+        LocationPermissionState.DENIED_PERMANENTLY -> "定位权限被永久拒绝"
+    }
+
+    WeatherCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = locationIcon(MaterialTheme.colorScheme.primary),
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(dotColor)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = state.description(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+            }
+
+            // 按钮：已拿到精确位置就不显示（没有可点的）
+            if (state != LocationPermissionState.GRANTED_PRECISE) {
+                Spacer(Modifier.width(10.dp))
+                val buttonText = when (state) {
+                    LocationPermissionState.NOT_REQUESTED -> "授权"
+                    LocationPermissionState.GRANTED_APPROXIMATE -> "提精确"
+                    LocationPermissionState.DENIED -> "重试"
+                    LocationPermissionState.DENIED_PERMANENTLY -> "去设置"
+                    LocationPermissionState.GRANTED_PRECISE -> ""
+                }
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable { onRequest() }
+                ) {
+                    Text(
+                        text = buttonText,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 7.dp)
+                    )
+                }
+            }
         }
     }
 }

@@ -38,6 +38,7 @@ import com.oopnv70.uilab.ui.weather.cloudIcon
 import com.oopnv70.uilab.ui.weather.pressureIcon
 import com.oopnv70.uilab.ui.weather.sunIcon
 import com.oopnv70.uilab.ui.weather.sunriseIcon
+import com.oopnv70.uilab.location.LocationPermissionState
 import androidx.compose.ui.graphics.Color
 
 /**
@@ -45,7 +46,7 @@ import androidx.compose.ui.graphics.Color
  *
  * 结构：
  *  ┌───────────────────────────────────┐
- *  │  [灵动岛胶囊]  ← 悬浮在最上层        │  ← 收起/展开
+ *  │  [灵动岛小药丸]  ← 悬浮在最上层      │  ← 点击展开/收起
  *  │                                   │
  *  │      内容区（4 个天气大类页面）      │  ← 随底部导航切换
  *  │                                   │
@@ -53,9 +54,13 @@ import androidx.compose.ui.graphics.Color
  *  └───────────────────────────────────┘
  *
  * 注意图层顺序：胶囊必须画在内容之后（下层），否则会被内容遮住。
+ *
+ * @param locationPermissionState 定位权限状态（由 MainActivity 申请后传入）。
  */
 @Composable
-fun LabApp() {
+fun LabApp(
+    locationPermissionState: LocationPermissionState = LocationPermissionState.NOT_REQUESTED
+) {
     var selectedIndex by rememberSaveable { mutableIntStateOf(0) }
     // 灵动岛是否展开（不跨进程保存，属于「临时 UI 状态」）
     var islandExpanded by remember { mutableStateOf(false) }
@@ -85,7 +90,9 @@ fun LabApp() {
                 WeatherGroup.OVERVIEW -> OverviewPage()
                 WeatherGroup.HOURLY -> HourlyPage()
                 WeatherGroup.DAILY -> DailyPage()
-                WeatherGroup.CITIES -> CitiesPage()
+                WeatherGroup.CITIES -> CitiesPage(
+                    locationPermissionState = locationPermissionState
+                )
             }
         }
 
