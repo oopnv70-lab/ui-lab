@@ -484,57 +484,64 @@ fun HourlyPage(
                 }
             }
 
-            // 降水概率
+            // 降水概率：突出「下个小时」，下面配 24 小时概率柱状图形表
             item {
                 WeatherCard {
                     Column {
-                        SectionTitle("降水概率", trailing = "%")
-                        Spacer(Modifier.height(12.dp))
-                        hourly.filter { it.precipitation > 0 }.forEach { point ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
+                        val nextHour = hourly.getOrNull(1)
+                        val nextProb = nextHour?.precipitation
+                        val nextLabel = nextHour?.time ?: "—"
+
+                        SectionTitle("降水概率", trailing = nextLabel)
+
+                        Spacer(Modifier.height(10.dp))
+
+                        // ---- 大字号突出「下个小时」 ----
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.Bottom
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = point.time,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.width(52.dp)
+                                    text = "下个小时降雨概率",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(8.dp)
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth(point.precipitation / 100f)
-                                            .height(8.dp)
-                                            .clip(RoundedCornerShape(4.dp))
-                                            .background(MaterialTheme.colorScheme.primary)
-                                    )
-                                }
+                                Spacer(Modifier.height(2.dp))
                                 Text(
-                                    text = "${point.precipitation}%",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier
-                                        .width(44.dp)
-                                        .padding(start = 8.dp)
+                                    text = nextProb?.let { "$it%" } ?: "—",
+                                    style = MaterialTheme.typography.displaySmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = when {
+                                        nextProb == null -> MaterialTheme.colorScheme.outline
+                                        nextProb >= 60 -> MaterialTheme.colorScheme.primary
+                                        nextProb > 0 -> MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
+                                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
                                 )
                             }
-                        }
-                        if (hourly.none { it.precipitation > 0 }) {
                             Text(
-                                text = "未来 24 小时无降水",
+                                text = precipitationHint(nextProb),
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(bottom = 6.dp)
                             )
                         }
+
+                        Spacer(Modifier.height(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(1.dp)
+                                .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+                        )
+                        Spacer(Modifier.height(12.dp))
+
+                        // ---- 24 小时概率柱状图形表（横向可滑动，柱子够粗才看得清） ----
+                        PrecipitationChart(points = hourly, highlightIndex = 1)
+
+                        Spacer(Modifier.height(10.dp))
+                        SourceTag(WeatherSource.OPEN_METEO)
                     }
                 }
             }
@@ -610,8 +617,10 @@ private fun HourlyChip(point: HourlyPoint) {
 }
 
 /**
- * 温度走势条。
- * 用一排竖条近似折线图（不引入图表库，保持零依赖）。
+ * 温度走向图。
+ * 之前用「整行均分 + 极窄柱子」画，24 个点挤在一行里每根只有几像素宽，
+ * 看起来只剩一排细缝、像没画出来。改成横向可滑动的粗柱图 + 顶端温度值，
+ * 每根柱子固定 30dp 宽、88dp 高，走势一眼可见。
  */
 @Composable
 private fun TemperatureBars(points: List<HourlyPoint>) {
@@ -627,41 +636,151 @@ private fun TemperatureBars(points: List<HourlyPoint>) {
     val min = points.minOf { it.temperature }
     val max = points.maxOf { it.temperature }
     val range = (max - min).coerceAtLeast(1)
+    val primary = MaterialTheme.colorScheme.primary
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(96.dp),
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
-        verticalAlignment = Alignment.Bottom
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        points.forEach { point ->
+        items(points) { point ->
             val ratio = (point.temperature - min).toFloat() / range
-            // 条高：最低 20% 最高 100%
-            val heightFraction = 0.2f + ratio * 0.8f
+            // 柱高：最低 15% 最高 100%，保证低温日也看得见
+            val heightFraction = 0.15f + ratio * 0.85f
             Column(
-                modifier = Modifier.weight(1f),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Bottom
+                modifier = Modifier.width(34.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // 注意：fillMaxSize 没有 fraction 重载，这里必须用
-                // fillMaxHeight(fraction) 才能「按比例长高」。
+                // 柱子（从底部往上长）
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .fillMaxHeight(fraction = heightFraction)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(
-                            if (point.isNow) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
-                            }
-                        )
+                        .width(26.dp)
+                        .height(88.dp),
+                    contentAlignment = Alignment.BottomCenter
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(26.dp)
+                            .fillMaxHeight(fraction = heightFraction)
+                            .clip(
+                                RoundedCornerShape(
+                                    topStart = 7.dp,
+                                    topEnd = 7.dp,
+                                    bottomEnd = 0.dp,
+                                    bottomStart = 0.dp
+                                )
+                            )
+                            .background(
+                                if (point.isNow) primary
+                                else primary.copy(alpha = 0.4f)
+                            )
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                // 温度值
+                Text(
+                    text = "${point.temperature}°",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = if (point.isNow) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (point.isNow) primary else MaterialTheme.colorScheme.onSurface
+                )
+                // 时间
+                Text(
+                    text = point.time,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
     }
+}
+
+/**
+ * 降水概率图形表。
+ * 以柱状图呈现未来 24 小时的降水概率，并把「下一个小时」高亮（[highlightIndex]），
+ * 概率越高柱子越高、颜色越实。
+ */
+@Composable
+private fun PrecipitationChart(
+    points: List<HourlyPoint>,
+    highlightIndex: Int = 1
+) {
+    if (points.isEmpty()) {
+        Text(
+            text = "暂无逐时数据",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.outline
+        )
+        return
+    }
+    val primary = MaterialTheme.colorScheme.primary
+    val track = MaterialTheme.colorScheme.surfaceContainerHighest
+
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        itemsIndexed(points) { index, point ->
+            val isNext = index == highlightIndex
+            val prob = point.precipitation.coerceIn(0, 100)
+            // 柱高：最低 6%（0% 也留一条底线），最高 100%
+            val heightFraction = 0.06f + (prob / 100f) * 0.94f
+            Column(
+                modifier = Modifier.width(34.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // 概率数值
+                Text(
+                    text = if (prob > 0) "$prob" else "",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = if (isNext) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (isNext) primary else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(2.dp))
+                // 轨道 + 柱体
+                Box(
+                    modifier = Modifier
+                        .width(26.dp)
+                        .height(72.dp)
+                        .clip(RoundedCornerShape(7.dp))
+                        .background(track.copy(alpha = 0.5f)),
+                    contentAlignment = Alignment.BottomCenter
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(26.dp)
+                            .fillMaxHeight(fraction = heightFraction)
+                            .clip(RoundedCornerShape(7.dp))
+                            .background(
+                                when {
+                                    isNext -> primary
+                                    prob >= 60 -> primary.copy(alpha = 0.75f)
+                                    prob > 0 -> primary.copy(alpha = 0.45f)
+                                    else -> track
+                                }
+                            )
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                // 时间（高亮的那个加粗）
+                Text(
+                    text = point.time,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = if (isNext) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (isNext) primary else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+/** 根据降水概率给一句人话说明。null 表示数据缺失。 */
+private fun precipitationHint(prob: Int?): String = when {
+    prob == null -> "暂无数据"
+    prob == 0 -> "基本不会下雨"
+    prob < 30 -> "下雨可能性较小"
+    prob < 60 -> "可能有雨，可以留意"
+    prob < 80 -> "下雨可能性较大"
+    else -> "很可能下雨，记得带伞"
 }
 
 // =====================================================================
