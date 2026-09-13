@@ -97,7 +97,13 @@ class WeatherViewModel : ViewModel() {
     // 1) 关键词搜索城市（走网络，无预置表）
     // -----------------------------------------------------------------
 
-    /** 输入变化时调用；内部做 350ms 防抖，避免每敲一个字都发请求。 */
+    /**
+     * 输入变化时调用；内部做防抖，避免每敲一个字都发请求。
+     *
+     * 防抖设为 1100ms 而不是更短的 350ms，是**为了遵守 Nominatim 的使用条款**：
+     * 它要求客户端不超过 1 请求/秒，否则可能被临时封禁。
+     * 配合上面的 searchJob.cancel()，用户连续打字时只有停顿后的一次请求会真正发出。
+     */
     fun onSearchQueryChanged(query: String) {
         searchJob?.cancel()
         val q = query.trim()
@@ -106,7 +112,7 @@ class WeatherViewModel : ViewModel() {
             return
         }
         searchJob = viewModelScope.launch {
-            delay(350)
+            delay(1100)
             _search.value = CitySearchState.Loading
             val hits = WeatherRepository.searchCities(q, count = 10)
             Log.d(TAG, "搜索「$q」→ ${hits.size} 条")

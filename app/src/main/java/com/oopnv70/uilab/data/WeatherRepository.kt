@@ -3,6 +3,7 @@ package com.oopnv70.uilab.data
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import java.net.HttpURLConnection
 import java.net.URL
@@ -35,6 +36,19 @@ object WeatherRepository {
     private const val GEO_URL = "https://geocoding-api.open-meteo.com/v1/search"
     private const val FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 
+    /**
+     * Nominatim（OpenStreetMap）地理编码。
+     *
+     * 为什么换它：Open-Meteo 的地名库中文覆盖不全 ——
+     * 「淮南 / 许昌 / 宿州 / 安徽」直接 0 结果，「上海市」还会命中美国伊利诺伊州。
+     * Nominatim 的中文来自 OSM 的 name:zh 标签，实测覆盖完整。
+     *
+     * ⚠️ 官方使用条款：
+     *   1. 必须带可识别的 User-Agent（[httpGet] 里已统一带上）
+     *   2. 限速 1 请求/秒 —— 所以调用方（搜索框）必须做防抖
+     */
+    private const val NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+
     /** 宽松 JSON：忽略未知字段，缺失字段用默认值。 */
     private val json = Json {
         ignoreUnknownKeys = true
@@ -49,34 +63,81 @@ object WeatherRepository {
     /**
      * 用关键词搜索城市。
      *
-     * @param keyword 用户输入，如「深圳」「Tokyo」「乌鲁木齐」。
+     * 策略：**先问 Nominatim（中文覆盖好），没有再退回 Open-Meteo**。
+     * 这样既拿到中文全面覆盖，也保留一个兜底源以防某个源临时抽风。
+     *
+     * @param keyword 用户输入，如「淮南」「深圳」「Tokyo」。
      * @param count 最多返回几条。
-     * @return 匹配到的地点列表；网络失败或没有结果时返回空列表。
+     * @return 匹配到的地点列表；两个源都失败或都没结果时返回空列表。
      */
     suspend fun searchCities(keyword: String, count: Int = 10): List<GeoPlace> {
         val q = keyword.trim()
         if (q.isEmpty()) return emptyList()
 
-        val url = "$GEO_URL?name=${enc(q)}&count=$count&language=zh&format=json"
-        return try {
-            val body = httpGet(url)
-            val resp = json.decodeFromString(GeoSearchResponse.serializer(), body)
-            val list = resp.results.orEmpty()
-                .filter { it.name.isNotBlank() }
-                .map {
-                    GeoPlace(
-                        name = it.name,
-                        subtitle = it.subtitle,
-                        latitude = it.latitude,
-                        longitude = it.longitude
-                    )
-                }
-            Log.d(TAG, "搜索「$q」→ ${list.size} 条")
-            list
-        } catch (t: Throwable) {
-            Log.w(TAG, "搜索「$q」失败: ${t.message}")
-            emptyList()
+        // 首选 Nominatim
+        val primary = searchCitiesNominatim(q, count)
+        if (primary.isNotEmpty()) {
+            Log.d(TAG, "搜索「$q」→ Nominatim ${primary.size} 条")
+            return primary
         }
+
+        // 兜底 Open-Meteo
+        val fallback = searchCitiesOpenMeteo(q, count)
+        Log.d(TAG, "搜索「$q」→ Nominatim 0 条，Open-Meteo 兜底 ${fallback.size} 条")
+        return fallback
+    }
+
+    /** 用 Nominatim（OSM）搜城市。 */
+    private suspend fun searchCitiesNominatim(q: String, count: Int): List<GeoPlace> = try {
+        val url = "$NOMINATIM_URL?q=${enc(q)}&format=jsonv2&addressdetails=1" +
+                "&accept-language=zh-CN&limit=$count"
+        val body = httpGet(url)
+        val raw = json.decodeFromString(
+            ListSerializer(NominatimPlaceDto.serializer()), body
+        )
+        raw.asSequence()
+            // 行政区结果优先：实测搜「许昌」第一条是**火车站**（addresstype=railway），
+            // 直接取第一条会拿到车站而不是城市。这里把「城市 / 地区 / 省 / 国家」
+            // 这类行政区排到前面，铁路 / 道路 / 建筑等排后面。
+            .sortedByDescending { dto -> administrativeRank(dto.addressType) }
+            .mapNotNull { dto ->
+                val lat = dto.latitude
+                val lon = dto.longitude
+                val name = dto.name?.takeIf { it.isNotBlank() }
+                    ?: dto.displayName?.substringBefore(',')?.trim()
+                // lat/lon 解析失败、或没有名字的直接丢掉（不编造）
+                if (lat == null || lon == null || name.isNullOrBlank()) return@mapNotNull null
+                GeoPlace(
+                    name = name,
+                    subtitle = dto.buildSubtitle(),
+                    latitude = lat,
+                    longitude = lon
+                )
+            }
+            .toList()
+    } catch (t: Throwable) {
+        Log.w(TAG, "Nominatim 搜索「$q」失败: ${t.message}")
+        emptyList()
+    }
+
+    /** 用 Open-Meteo Geocoding 搜城市（兜底）。 */
+    private suspend fun searchCitiesOpenMeteo(q: String, count: Int): List<GeoPlace> = try {
+        val url = "$GEO_URL?name=${enc(q)}&count=$count&language=zh&format=json"
+        val body = httpGet(url)
+        val resp = json.decodeFromString(GeoSearchResponse.serializer(), body)
+        resp.results.orEmpty()
+            .filter { it.name.isNotBlank() }
+            .map {
+                GeoPlace(
+                    name = it.name,
+                    subtitle = it.subtitle,
+                    latitude = it.latitude,
+                    longitude = it.longitude
+                )
+            }
+    } catch (t: Throwable) {
+        Log.w(TAG, "Open-Meteo 搜索「$q」失败: ${t.message}")
+        emptyList()
     }
 
     // -----------------------------------------------------------------
