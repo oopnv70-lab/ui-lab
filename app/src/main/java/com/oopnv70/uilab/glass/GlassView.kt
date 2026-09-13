@@ -6,7 +6,6 @@ import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.PorterDuff
-import android.graphics.RenderEffect
 import android.graphics.RuntimeShader
 import android.graphics.Shader
 import android.os.Build
@@ -75,18 +74,17 @@ class GlassView @JvmOverloads constructor(
     var brightness: Float = 1.04f
 
     /**
-     * 背景模糊半径（像素）。0 = 不模糊，保持背景完全清晰。
+     * 背景模糊半径（像素）。
      *
-     * 这里给一个**很小的**模糊（3~6），而不是毛玻璃那种大模糊。
-     * 原因：液态玻璃的重点是「折射」，不是「模糊」。
-     * 全清晰会让折射后的背景显得太"硬"，稍微糊一点点最像真玻璃。
+     * ⚠️ 目前**不使用** Paint/RenderEffect 级模糊：
+     *    setRenderEffect 在本项目编译环境下无法解析，已移除。
+     *    液态玻璃的重点是「折射」而非「模糊」，模糊可后续在 shader 内实现。
+     *    这个字段保留作参数占位，避免 API 变动影响调用方。
      */
-    var backdropBlur: Float = 4f
+    var backdropBlur: Float = 0f
 
     /** SDF 最大影响距离，即"玻璃厚度"。 */
     var sdfMaxDistance: Int = 60
-
-    private var backdropRenderEffect: RenderEffect? = null
 
     // =================================================================
     // 尺寸变化 → 重建 SDF 与离屏缓冲
@@ -105,13 +103,6 @@ class GlassView @JvmOverloads constructor(
         backdrop = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
 
         rebuildSdf(w, h)
-
-        // 背景模糊（可选，很轻）
-        backdropRenderEffect = if (backdropBlur > 0f) {
-            RenderEffect.createBlurEffect(
-                backdropBlur, backdropBlur, Shader.TileMode.CLAMP
-            )
-        } else null
     }
 
     /**
@@ -186,18 +177,18 @@ class GlassView @JvmOverloads constructor(
                 visibility = wasVisible
             }
 
-            // offscreen → backdrop（如果需要轻微模糊）
-            // ⚠️ 用显式 if-null 而不是 `?.let { paint.setRenderEffect(it) }`：
-            //    `let` 里的 lambda 参数类型推断在 AGP 9.x + Kotlin 2.2 下会失败
-            //    （报 Cannot infer type / Unresolved reference），显式分支最稳。
+            // offscreen → backdrop
+            //
+            // ⚠️ 这里**不做** Paint 级模糊。
+            //    原因：Paint.setRenderEffect() 虽然名义上是 API 31+，但在
+            //    本项目的 AGP 9.x + compileSdk 37 组合下编译期报
+            //    "Unresolved reference 'setRenderEffect'"，无法通过。
+            //    而且液态玻璃的核心是「折射」，不是「模糊」——
+            //    模糊交给 shader 内部按需处理即可，反而更可控。
             val bc = Canvas(bd)
             bc.drawColor(0, PorterDuff.Mode.CLEAR)
             val bmp = off.copy(Bitmap.Config.ARGB_8888, false)
             val paint = Paint(Paint.FILTER_BITMAP_FLAG)
-            val effect = backdropRenderEffect
-            if (effect != null) {
-                paint.setRenderEffect(effect)
-            }
             bc.drawBitmap(bmp, 0f, 0f, paint)
             bmp.recycle()
         }
