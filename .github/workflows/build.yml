@@ -50,9 +50,17 @@ jobs:
 
       - name: Generate Gradle wrapper
         run: gradle wrapper --gradle-version 9.7.1
-
       - name: Build Debug APK
-        run: ./gradlew :app:assembleDebug --stacktrace --no-daemon
+        run: |
+          ./gradlew :app:assembleDebug --stacktrace --no-daemon 2>&1 | tee build.log
+          status=${PIPESTATUS[0]}
+          # 把 Kotlin 编译错误行（以 "e: " 开头）暴露成 GitHub annotation，
+          # 否则失败时网页上只能看到 "exit code 1"，看不到真正的报错。
+          grep '^e: ' build.log | head -40 | while IFS= read -r line; do
+            echo "::error::$line"
+          done
+          exit $status
+
 
       - name: Collect and verify APK
         run: |
