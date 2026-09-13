@@ -30,11 +30,11 @@ val OnErrorLight = Color(0xFFFFFFFF)
 val ErrorContainerLight = Color(0xFFFFDAD6)
 val OnErrorContainerLight = Color(0xFF410002)
 
-val BackgroundLight = Color(0xFFF9F9FF)
+val BackgroundLight = Color(0xFFFCFCFF)
 val OnBackgroundLight = Color(0xFF191C20)
-val SurfaceLight = Color(0xFFF9F9FF)
+val SurfaceLight = Color(0xFFFCFCFF)
 val OnSurfaceLight = Color(0xFF191C20)
-val SurfaceVariantLight = Color(0xFFE0E2EC)
+val SurfaceVariantLight = Color(0xFFE4E6F0)
 val OnSurfaceVariantLight = Color(0xFF44474E)
 
 val OutlineLight = Color(0xFF74777F)
@@ -44,6 +44,13 @@ val ScrimLight = Color(0xFF000000)
 val InverseSurfaceLight = Color(0xFF2E3036)
 val InverseOnSurfaceLight = Color(0xFFF0F0F7)
 val InversePrimaryLight = Color(0xFFAAC7FF)
+
+// ---------- Surface Containers（浅色：整体提亮，用于导航栏等「浮起」容器） ----------
+val SurfaceContainerLowestLight = Color(0xFFFFFFFF)
+val SurfaceContainerLowLight = Color(0xFFF6F7FC)
+val SurfaceContainerLight = Color(0xFFF1F2F8)
+val SurfaceContainerHighLight = Color(0xFFEBEDF3)
+val SurfaceContainerHighestLight = Color(0xFFE5E7EE)
 
 // ---------- Dark ----------
 val PrimaryDark = Color(0xFFAAC7FF)
@@ -80,3 +87,10 @@ val ScrimDark = Color(0xFF000000)
 val InverseSurfaceDark = Color(0xFFE2E2E9)
 val InverseOnSurfaceDark = Color(0xFF2E3036)
 val InversePrimaryDark = Color(0xFF415F91)
+
+// ---------- Surface Containers（深色） ----------
+val SurfaceContainerLowestDark = Color(0xFF0C0E13)
+val SurfaceContainerLowDark = Color(0xFF191C20)
+val SurfaceContainerDark = Color(0xFF1D2024)
+val SurfaceContainerHighDark = Color(0xFF272A2F)
+val SurfaceContainerHighestDark = Color(0xFF32353A)

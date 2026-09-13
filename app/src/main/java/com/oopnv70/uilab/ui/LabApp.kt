@@ -90,13 +90,13 @@ fun LabApp() {
             onSelect = { selectedIndex = it },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                // 左右 16dp 空隙（跟随 RTL 自动镜像）
+                // 左右 12dp 空隙（更紧凑）
                 .padding(
-                    start = 16.dp,
-                    end = 16.dp
+                    start = 12.dp,
+                    end = 12.dp
                 )
-                // 底部：系统导航栏高度 + 额外 16dp 悬浮空隙
-                .padding(bottom = navBottomInset + 16.dp)
+                // 底部：系统导航栏高度 + 额外 10dp 悬浮空隙（更紧凑）
+                .padding(bottom = navBottomInset + 10.dp)
         )
     }
 }

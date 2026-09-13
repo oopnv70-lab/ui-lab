@@ -53,7 +53,12 @@ private val LightScheme = lightColorScheme(
     scrim = ScrimLight,
     inverseSurface = InverseSurfaceLight,
     inverseOnSurface = InverseOnSurfaceLight,
-    inversePrimary = InversePrimaryLight
+    inversePrimary = InversePrimaryLight,
+    surfaceContainerLowest = SurfaceContainerLowestLight,
+    surfaceContainerLow = SurfaceContainerLowLight,
+    surfaceContainer = SurfaceContainerLight,
+    surfaceContainerHigh = SurfaceContainerHighLight,
+    surfaceContainerHighest = SurfaceContainerHighestLight
 )
 
 private val DarkScheme = darkColorScheme(
@@ -84,7 +89,12 @@ private val DarkScheme = darkColorScheme(
     scrim = ScrimDark,
     inverseSurface = InverseSurfaceDark,
     inverseOnSurface = InverseOnSurfaceDark,
-    inversePrimary = InversePrimaryDark
+    inversePrimary = InversePrimaryDark,
+    surfaceContainerLowest = SurfaceContainerLowestDark,
+    surfaceContainerLow = SurfaceContainerLowDark,
+    surfaceContainer = SurfaceContainerDark,
+    surfaceContainerHigh = SurfaceContainerHighDark,
+    surfaceContainerHighest = SurfaceContainerHighestDark
 )
 
 /**
@@ -92,6 +102,8 @@ private val DarkScheme = darkColorScheme(
  *
  * @param darkTheme 是否使用深色主题（默认跟随系统）。
  * @param dynamicColor 是否启用动态取色（Monet，Android 12+ 跟随壁纸）。
+ *        注意：开启后 Color.kt 中的基准色会被系统根据壁纸生成的配色覆盖；
+ *        若想看本项目自带的「更亮」基准色，把此参数设为 false。
  */
 @Composable
 fun UiLabTheme(
