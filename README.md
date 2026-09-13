@@ -108,7 +108,12 @@
 项目通过 **GitHub Actions** 云端构建，无需本地 Android SDK。
 
 - 触发：推送到 `main` 分支，或手动 `workflow_dispatch`
-- 产物：`apk` Artifact（含 debug / release 两个 APK）
+- 产物：`ui-lab-debug-apk` Artifact（**只有 debug APK**；release 当前未在 CI 产出）
+- 签名：使用**固定签名**，APK 可直接覆盖安装升级（无需卸载）
+
+> 📄 **完整的构建配置说明见 [BUILD.md](./BUILD.md)** —— 包含逐项版本号、
+> 固定签名的实现方式、AGP 9.x 的两个易踩坑点、以及 CI 排错提示。
+> 该文档中的每一条都与仓库真实文件逐项核对过。
 
 ### 技术栈
 
