@@ -287,24 +287,43 @@ fun LabApp(
             )
         }
         // ---------- 顶部：灵动岛胶囊（最后画 → 层级最高） ----------
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .fillMaxWidth()
-                .padding(
-                    start = 14.dp,
-                    end = 14.dp,
-                    top = statusBarTop + 6.dp
+        //
+        // 【暂时屏蔽】2026-09：用户认为顶部这个胶囊实际用处不大、观感也一般，
+        // 先隐藏。这里刻意**只注释掉绘制调用**，而不是删除：
+        //   - DynamicIslandCapsule.kt 组件本体、参数、动画逻辑全部保留完好；
+        //   - 状态 islandExpanded 也保留（否则重开时还要再改一处）；
+        // 想恢复的话，把下面这段 Box 取消注释、并解开 import 即可，改动仅两处。
+        //
+        // 注意：currentWeather 仍被上方内容区使用，不要一起删掉。
+        if (SHOW_DYNAMIC_ISLAND) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .padding(
+                        start = 14.dp,
+                        end = 14.dp,
+                        top = statusBarTop + 6.dp
+                    )
+            ) {
+                DynamicIslandCapsule(
+                    current = currentWeather,
+                    expanded = islandExpanded,
+                    onToggle = { islandExpanded = !islandExpanded }
                 )
-        ) {
-            DynamicIslandCapsule(
-                current = currentWeather,
-                expanded = islandExpanded,
-                onToggle = { islandExpanded = !islandExpanded }
-            )
+            }
         }
     }
 }
+
+/**
+ * 是否显示顶部灵动岛胶囊。
+ *
+ * 置为 false = 暂时隐藏（当前默认）。
+ * 想恢复成 true 时，记得同时解开 `DynamicIslandCapsule` 的 import
+ * （那个 import 在 false 分支下用不到，编译器会有未使用提示）。
+ */
+private const val SHOW_DYNAMIC_ISLAND = false
 
 /**
  * 把 ViewModel 的 [SavedCity] 转成 UI 层用的 [CityItem]。
