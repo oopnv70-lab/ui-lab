@@ -325,14 +325,21 @@ const val TEMP_UNKNOWN: Int = Int.MIN_VALUE
 
 /**
  * 构建导航项：四个天气大类，使用自绘图标。
- * 颜色定义为「未选中色」，实际着色由导航栏按选中状态覆盖。
+ *
+ * 关于 [Color.Black] 这个「看起来写死颜色」的写法：
+ * 自绘图标是**描边**图形，描边色在构建 ImageVector 时就被 `SolidColor(tint)`
+ * 固化进路径里了。如果这里传 `Color.Unspecified`，描边就会以「未指定颜色」
+ * 绘制——结果是四个 Tab 看上去一片空白（图标其实在，但画不出来）。
+ *
+ * 传一个确定的实色（黑色）让描边有颜色，真正的显示颜色再由
+ * `Icon(tint = ...)` 通过 ColorFilter 覆盖，从而跟随导航栏的选中 / 未选中状态。
  */
 private fun buildNavItems(): List<NavItem> {
-    val tint = Color.Unspecified
+    val paint = Color.Black
     return listOf(
-        NavItem(icon = sunIcon(tint), label = WeatherGroup.OVERVIEW.label),
-        NavItem(icon = sunriseIcon(tint), label = WeatherGroup.HOURLY.label),
-        NavItem(icon = cloudIcon(tint), label = WeatherGroup.DAILY.label),
-        NavItem(icon = pressureIcon(tint), label = WeatherGroup.CITIES.label)
+        NavItem(icon = sunIcon(paint), label = WeatherGroup.OVERVIEW.label),
+        NavItem(icon = sunriseIcon(paint), label = WeatherGroup.HOURLY.label),
+        NavItem(icon = cloudIcon(paint), label = WeatherGroup.DAILY.label),
+        NavItem(icon = pressureIcon(paint), label = WeatherGroup.CITIES.label)
     )
 }
