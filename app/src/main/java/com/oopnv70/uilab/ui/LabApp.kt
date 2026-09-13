@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material.icons.rounded.Bookmark
 import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.Home
@@ -46,7 +47,7 @@ private enum class LabTab(
     HOME("首页", Icons.Rounded.Home, Icons.Outlined.Home),
     EXPLORE("发现", Icons.Rounded.Explore, Icons.Outlined.Explore),
     SAVED("收藏", Icons.Rounded.Bookmark, Icons.Outlined.BookmarkBorder),
-    PROFILE("我的", Icons.Rounded.Person, Icons.Outlined.Person)
+    PROFILE("我的", Icons.Rounded.Person, Icons.Outlined.PersonOutline)
 }
 
 /**
