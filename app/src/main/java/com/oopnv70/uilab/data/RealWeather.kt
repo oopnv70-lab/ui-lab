@@ -1,5 +1,7 @@
 package com.oopnv70.uilab.data
 
+import kotlin.math.roundToInt
+
 // =====================================================================
 // 真实天气模型：DTO → UI 可直接用的数据
 // =====================================================================
@@ -104,14 +106,14 @@ object RealWeatherFactory {
                 .take(24)
                 .mapNotNull { i ->
                     val t = times.getOrNull(i) ?: return@mapNotNull null
-                    val tp = hourly.temperature.getOrNull(i)
-                    val code = hourly.weatherCode.getOrNull(i)
+                    val tp = hourly?.temperature?.getOrNull(i)
+                    val code = hourly?.weatherCode?.getOrNull(i)
                     RealHourly(
                         time = if (i == startIdx) "现在" else t.substringAfter("T").take(5),
                         temperature = tp?.roundToIntSafe() ?: return@mapNotNull null,
                         conditionText = wmoDescription(code),
                         kind = wmoKind(code),
-                        precipitation = hourly.precipitationProbability.getOrNull(i),
+                        precipitation = hourly?.precipitationProbability?.getOrNull(i),
                         isNow = i == startIdx
                     )
                 }
@@ -122,7 +124,7 @@ object RealWeatherFactory {
             val times = daily?.time.orEmpty()
             times.indices.mapNotNull { i ->
                 val date = times.getOrNull(i) ?: return@mapNotNull null
-                val code = daily.weatherCode.getOrNull(i)
+                val code = daily?.weatherCode?.getOrNull(i)
                 RealDaily(
                     weekday = weekdayLabel(date, i),
                     date = date.substringAfter("-").let { md ->
@@ -134,9 +136,9 @@ object RealWeatherFactory {
                     },
                     conditionText = wmoDescription(code),
                     kind = wmoKind(code),
-                    high = daily.temperatureMax.getOrNull(i)?.roundToIntSafe() ?: 0,
-                    low = daily.temperatureMin.getOrNull(i)?.roundToIntSafe() ?: 0,
-                    precipitation = daily.precipitationProbabilityMax.getOrNull(i)
+                    high = daily?.temperatureMax?.getOrNull(i)?.roundToIntSafe() ?: 0,
+                    low = daily?.temperatureMin?.getOrNull(i)?.roundToIntSafe() ?: 0,
+                    precipitation = daily?.precipitationProbabilityMax?.getOrNull(i)
                 )
             }
         }
@@ -189,7 +191,7 @@ object RealWeatherFactory {
 
 /** Double → Int 的安全四舍五入（防 NaN/Inf）。 */
 private fun Double.roundToIntSafe(): Int =
-    if (isNaN() || isInfinite()) 0 else kotlin.math.roundToInt()
+    if (isNaN() || isInfinite()) 0 else this.roundToInt()
 
 /**
  * 可空 Double 的版本。

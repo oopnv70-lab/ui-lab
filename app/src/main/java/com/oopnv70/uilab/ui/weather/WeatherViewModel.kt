@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.oopnv70.uilab.data.GeoPlace
 import com.oopnv70.uilab.data.RealWeather
+import com.oopnv70.uilab.data.WeatherKind
 import com.oopnv70.uilab.data.WeatherRepository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
