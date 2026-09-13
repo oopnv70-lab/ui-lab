@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -60,10 +61,13 @@ fun LabApp() {
     var selectedIndex by rememberSaveable { mutableIntStateOf(0) }
     val tabs = LabTab.entries
 
-    // 导航栏需要避让系统导航栏（手势条），再额外留出「悬浮空隙」
+    // 导航栏需要避让系统导航栏（手势条），再额外留出「悬浮空隙」。
+    // 手势导航设备上 navigationBars inset 可能为 0，这里用一个保底值兜住，
+    // 确保胶囊底部始终「悬空」，不会贴到屏幕边缘。
     val navBottomInset = WindowInsets.navigationBars
         .asPaddingValues()
         .calculateBottomPadding()
+        .coerceAtLeast(16.dp)
 
     Box(modifier = Modifier.fillMaxSize()) {
 
@@ -82,21 +86,27 @@ fun LabApp() {
         }
 
         // ---------- 浮动胶囊导航栏 ----------
-        FloatingPillNavigationBar(
-            items = remember {
-                tabs.map { NavItem(icon = it.selectedIcon, label = it.label) }
-            },
-            selectedIndex = selectedIndex,
-            onSelect = { selectedIndex = it },
+        // 注意：间距必须由「外层容器」提供，不能塞进导航栏组件自己的 modifier。
+        // 否则 Surface 的 shape 裁剪会作用在内缩后的矩形上，圆角会被「拉平」，
+        // 看起来像直角、并且紧贴屏幕。
+        Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                // 左右 12dp 空隙（更紧凑）
+                .fillMaxWidth()
                 .padding(
                     start = 12.dp,
-                    end = 12.dp
+                    end = 12.dp,
+                    // 底部：系统导航栏高度 + 额外悬浮空隙
+                    bottom = navBottomInset + 10.dp
                 )
-                // 底部：系统导航栏高度 + 额外 10dp 悬浮空隙（更紧凑）
-                .padding(bottom = navBottomInset + 10.dp)
-        )
+        ) {
+            FloatingPillNavigationBar(
+                items = remember {
+                    tabs.map { NavItem(icon = it.selectedIcon, label = it.label) }
+                },
+                selectedIndex = selectedIndex,
+                onSelect = { selectedIndex = it }
+            )
+        }
     }
 }

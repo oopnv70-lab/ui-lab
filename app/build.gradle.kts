@@ -14,7 +14,8 @@ android {
         minSdk = 26
         targetSdk = 37
         versionCode = 1
-        versionName = "1.0"
+        // 每次 UI 调整递增，便于确认手机上装的是哪一版构建
+        versionName = "0.2-nav"
     }
     buildTypes {
         debug {

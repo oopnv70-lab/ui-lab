@@ -85,6 +85,7 @@ fun FloatingPillNavigationBar(
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxWidth()
+                .fillMaxHeight()                          // 撑满胶囊高度，保证滑块垂直居中
                 .padding(horizontal = BarInnerPadding)
         ) {
             val itemCount = items.size.coerceAtLeast(1)
