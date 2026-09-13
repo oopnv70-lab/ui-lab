@@ -8,6 +8,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -22,6 +23,9 @@ import com.oopnv70.uilab.location.PermissionLog
 import com.oopnv70.uilab.location.currentPermissionDiagnostics
 import com.oopnv70.uilab.location.rememberAutoLocation
 import com.oopnv70.uilab.location.rememberLocationPermission
+import com.oopnv70.uilab.settings.ThemeMode
+import com.oopnv70.uilab.settings.persistAppSettings
+import com.oopnv70.uilab.settings.readAppSettings
 import com.oopnv70.uilab.ui.LabApp
 import com.oopnv70.uilab.ui.theme.UiLabTheme
 
@@ -58,7 +62,28 @@ class MainActivity : ComponentActivity() {
             Log.d("UiLab", "serialization self-check -> ${DependencySelfCheck.parseSample()}")
         }
         setContent {
-            UiLabTheme {
+            // ================= 应用设置 =================
+            // 设置读取放在最外层：主题模式与动态取色要决定整个 UiLabTheme，
+            // 不能在 Theme 内部读（那就成了「主题决定主题」的循环依赖）。
+            //
+            // appSettings 是「当前设置」的唯一 UI 真相来源（Activity 级 state）。
+            // 设置页改完 → 写 SharedPreferences + 更新这个 state →
+            // 立即触发重组 → 主题/单位当场生效，无需重启。
+            //
+            // ⚠️ 变量名刻意用 activityContext 而不是 context：
+            //    下面定位流水线里已经有一个 `val context = LocalContext.current`，
+            //    同名会编译失败（重复声明）。
+            val activityContext = this@MainActivity
+            var appSettings by remember { mutableStateOf(readAppSettings(activityContext)) }
+
+            UiLabTheme(
+                darkTheme = when (appSettings.themeMode) {
+                    ThemeMode.SYSTEM -> isSystemInDarkTheme()
+                    ThemeMode.LIGHT -> false
+                    ThemeMode.DARK -> true
+                },
+                dynamicColor = appSettings.dynamicColor
+            ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -113,7 +138,15 @@ class MainActivity : ComponentActivity() {
                         locationPermissionState = diag.state,
                         permissionDiagnostics = diag.summary(),
                         locateState = locator.state,
-                        onRetryLocate = locator.refresh
+                        onRetryLocate = locator.refresh,
+                        appSettings = appSettings,
+                        onSettingsChange = { updated ->
+                            // 先落盘（持久化），再更新 state（立即生效）。
+                            // 顺序刻意为「先写盘」：万一进程被杀，盘上是新的，
+                            // 不会出现「界面显示新主题、重启后变回旧主题」。
+                            persistAppSettings(activityContext, updated)
+                            appSettings = updated
+                        }
                     )
                 }
             }

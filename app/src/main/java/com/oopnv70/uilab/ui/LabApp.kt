@@ -1,6 +1,7 @@
 package com.oopnv70.uilab.ui
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -9,8 +10,12 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
@@ -18,7 +23,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -31,13 +40,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.oopnv70.uilab.location.LocateUiState
 import com.oopnv70.uilab.location.LocationPermissionState
+import com.oopnv70.uilab.settings.AppSettingsState
 import com.oopnv70.uilab.ui.components.FloatingPillNavigationBar
 import com.oopnv70.uilab.ui.components.NavItem
+import com.oopnv70.uilab.ui.settings.SettingsPage
 import com.oopnv70.uilab.ui.weather.CitiesPage
 import com.oopnv70.uilab.ui.weather.CityItem
 import com.oopnv70.uilab.ui.weather.CurrentWeather
@@ -53,6 +65,7 @@ import com.oopnv70.uilab.ui.weather.WeatherGroup
 import com.oopnv70.uilab.ui.weather.WeatherUiState
 import com.oopnv70.uilab.ui.weather.WeatherViewModel
 import com.oopnv70.uilab.ui.weather.cloudIcon
+import com.oopnv70.uilab.ui.weather.mdiCog
 import com.oopnv70.uilab.ui.weather.observedTimeText
 import com.oopnv70.uilab.ui.weather.pressureIcon
 import com.oopnv70.uilab.ui.weather.sunIcon
@@ -82,6 +95,8 @@ import com.oopnv70.uilab.ui.weather.toSkyCondition
  * @param permissionDiagnostics 权限诊断摘要（原始 FINE/COARSE 值 + 判定）。
  * @param locateState 定位结果状态（拿到真实城市名 + 坐标后去拉真实天气）。
  * @param onRetryLocate 手动重新定位的回调。
+ * @param appSettings 当前应用设置（主题 / 单位等）。
+ * @param onSettingsChange 用户在设置页改动设置后的回调（由调用方落盘）。
  */
 @Composable
 fun LabApp(
@@ -89,11 +104,15 @@ fun LabApp(
     permissionDiagnostics: String = "",
     locateState: LocateUiState = LocateUiState.Idle,
     onRetryLocate: () -> Unit = {},
+    appSettings: AppSettingsState = AppSettingsState(),
+    onSettingsChange: (AppSettingsState) -> Unit = {},
     weatherViewModel: WeatherViewModel = viewModel()
 ) {
     var selectedIndex by rememberSaveable { mutableIntStateOf(0) }
     // 灵动岛是否展开（不跨进程保存，属于「临时 UI 状态」）
     var islandExpanded by remember { mutableStateOf(false) }
+    // 设置页是否打开（同样是临时 UI 状态，不需要跨进程保存）
+    var settingsOpen by rememberSaveable { mutableStateOf(false) }
     val groups = WeatherGroup.entries
 
     // ---- 订阅 ViewModel 的真实数据 ----
@@ -318,6 +337,65 @@ fun LabApp(
                 )
             }
         }
+
+        // ---------- 右上角：设置按钮 ----------
+        //
+        // 为什么放右上角浮动按钮，而不是在底部导航栏加第 5 个 Tab：
+        //   底部胶囊导航栏是按 items.size 等分宽度的（见 FloatingPillNavigationBar），
+        //   从 4 格变 5 格会让「概览 / 逐时 / 预报 / 城市」四个中文标签明显变窄，
+        //   且「设置」与天气四个大类不同级（前者是功能入口，后者是内容分区），
+        //   混在一起语义也不对。右上角齿轮是天气 App 的通行位置，且零布局回归风险。
+        //
+        // 只在设置页关闭时显示：设置页已全屏覆盖，不需要再叠一个按钮。
+        if (!settingsOpen) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(
+                        end = 14.dp,
+                        // 与灵动岛同高：灵动岛隐藏时，这里就是右上角最佳位置
+                        top = statusBarTop + 6.dp
+                    )
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.92f))
+                    .clickable { settingsOpen = true },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    // 同 buildNavItems：图标描边/填充色在构建时已固化，
+                    // 这里给确定实色，真实颜色由 Icon(tint) 覆盖。
+                    imageVector = mdiCog(Color.Black),
+                    contentDescription = "打开设置",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        }
+
+        // ---------- 设置页（全屏覆盖，层级最高） ----------
+        //
+        // 用 AnimatedVisibility 做上下滑入 + 淡入，表达「这是一个叠加的面板」。
+        // 放在最后 → 绘制在最上层，能盖住底部导航栏与设置按钮。
+        AnimatedVisibility(
+            visible = settingsOpen,
+            enter = slideInVertically(
+                animationSpec = tween(280, easing = FastOutSlowInEasing),
+                initialOffsetY = { full -> full / 12 }
+            ) + fadeIn(animationSpec = tween(200)),
+            exit = slideOutVertically(
+                animationSpec = tween(220, easing = FastOutLinearInEasing),
+                targetOffsetY = { full -> full / 12 }
+            ) + fadeOut(animationSpec = tween(160)),
+            label = "settingsPage"
+        ) {
+            SettingsPage(
+                settings = appSettings,
+                onSettingsChange = onSettingsChange,
+                onClose = { settingsOpen = false },
+                appVersion = APP_VERSION
+            )
+        }
     }
 }
 
@@ -329,6 +407,17 @@ fun LabApp(
  * （那个 import 在 false 分支下用不到，编译器会有未使用提示）。
  */
 private const val SHOW_DYNAMIC_ISLAND = false
+
+/**
+ * 展示在设置页「关于」里的版本号。
+ *
+ * 为什么不直接读 BuildConfig.VERSION_NAME：
+ *   ui-lab 的 versionName 是 `0.5-fixed-signing`（见 app/build.gradle.kts），
+ *   那是给构建/签名追踪用的内部标识，带后缀，展示给用户看不够干净。
+ *   这里单独维护一个「面向用户」的版本号。
+ *   ⚠️ 发版时需与 build.gradle.kts 的 versionName 一起改，两者不要脱节。
+ */
+private const val APP_VERSION = "0.5"
 
 /**
  * 把 ViewModel 的 [SavedCity] 转成 UI 层用的 [CityItem]。
