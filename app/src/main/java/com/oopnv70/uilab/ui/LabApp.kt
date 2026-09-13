@@ -110,8 +110,13 @@ fun LabApp(
     LaunchedEffect(locateState) {
         val success = locateState as? LocateUiState.Success ?: return@LaunchedEffect
         val place = success.place
+        // 注意：这里传的**不是** displayName。
+        // displayName 现在会细分到「安徽省淮南市田家庵区洞山街道」，
+        // 直接拿它当城市名会让卡片标题变得很长（「城市」栏位放不下）。
+        // 城市名取最粗的两级：优先「市」，没有市则用「省」，
+        // 都没有才退回「当前定位」。详细地址另外在定位卡片里展示。
         weatherViewModel.setLocatedCity(
-            name = place.displayName,
+            name = place.city ?: place.province ?: "当前定位",
             latitude = place.latitude,
             longitude = place.longitude
         )

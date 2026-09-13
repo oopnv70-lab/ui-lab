@@ -34,26 +34,97 @@ import kotlin.coroutines.resume
 //      失败时降级显示「当前位置」+ 经纬度，绝不伪造城市名。
 // =====================================================================
 
-/** 一次定位的结果：坐标 + 城市名（城市名可能为 null）。 */
+/**
+ * 一次定位的结果：坐标 + 从「省」到「街道」的分级地名。
+ *
+ * 分级说明（对应 Android [Address] 的字段名，全部可为 null —— 拿不到就留空，
+ * 绝不编造）：
+ *   province  省 / 自治区      ← Address.adminArea
+ *   city      市              ← Address.locality（直辖市时可能为空）
+ *   district  区 / 县          ← Address.subLocality（**街道级精度的关键**）
+ *   street    街道 / 道路      ← Address.thoroughfare
+ *   feature   门牌号 / 具体地点 ← Address.featureName（多数情况下为空）
+ *
+ * 现实约束（必须知道，否则会误以为代码写坏了）：
+ *   这些字段能不能拿到，**完全取决于设备自带的逆地理编码服务**。
+ *   国内无 GMS 的机型，Geocoder 常常只给到「市」一级，区的信息可能为空；
+ *   有 GMS 或厂商自带地图服务的机型，可以拿到区甚至街道。
+ *   所以 UI 必须能优雅地逐级降级显示，而不是假设一定有区/街道。
+ */
 data class LocatedPlace(
     /** 纬度。 */
     val latitude: Double,
     /** 经度。 */
     val longitude: Double,
-    /** 城市名（如「深圳市」）；反解失败时为 null。 */
-    val cityName: String?,
-    /** 省份 / 上级行政区（如「广东省」）；反解失败时为 null。 */
-    val adminName: String?,
+    /** 省 / 自治区（如「安徽省」）；拿不到为 null。 */
+    val province: String? = null,
+    /** 市（如「淮南市」）；拿不到为 null。 */
+    val city: String? = null,
+    /** 区 / 县（如「田家庵区」）；拿不到为 null。 */
+    val district: String? = null,
+    /** 街道 / 道路（如「洞山街道」）；拿不到为 null。 */
+    val street: String? = null,
+    /** 门牌 / 具体地点；拿不到为 null。 */
+    val feature: String? = null,
     /** 定位来源，便于调试。 */
     val provider: String
 ) {
-    /** 展示用的一行文字：优先「省 + 市」，退化到「当前定位」，再退化到坐标。 */
+    /**
+     * 展示用的一行文字，**从最细的一级往粗降级**。
+     *
+     * 拼装顺序：省 + 市 + 区 + 街道（能拿到几级就显示几级）。
+     * 例：
+     *   全部拿到   → 安徽省淮南市田家庵区洞山街道
+     *   只到区     → 安徽省淮南市田家庵区
+     *   只到市     → 安徽省淮南市
+     *   只有省     → 安徽省
+     *   全都没有   → 当前定位（绝不用假城市名兜底）
+     *
+     * 注意：直辖市的 Address.locality 常为空，所以 city 为空时跳过，
+     * 不会拼出「北京市北京市」这种重复。
+     */
     val displayName: String
-        get() = when {
-            cityName != null && adminName != null -> "$adminName$cityName"
-            cityName != null -> cityName
-            else -> "当前定位"
+        get() {
+            val parts = listOfNotNull(
+                province?.takeIf { it.isNotBlank() },
+                city?.takeIf { it.isNotBlank() },
+                district?.takeIf { it.isNotBlank() },
+                street?.takeIf { it.isNotBlank() }
+            ).distinct()   // 防止「上海市上海市」这类相邻重复
+            return if (parts.isEmpty()) "当前定位" else parts.joinToString("")
         }
+
+    /**
+     * 精度等级：拿到的**最细一级**是什么。
+     *
+     * 用于判断当前定位"够不够细"，也方便 UI 明确告诉用户
+     * "已定位到街道"还是"只到市区"。
+     */
+    val precisionLevel: PrecisionLevel
+        get() = when {
+            !feature.isNullOrBlank() -> PrecisionLevel.FEATURE
+            !street.isNullOrBlank() -> PrecisionLevel.STREET
+            !district.isNullOrBlank() -> PrecisionLevel.DISTRICT
+            !city.isNullOrBlank() -> PrecisionLevel.CITY
+            !province.isNullOrBlank() -> PrecisionLevel.PROVINCE
+            else -> PrecisionLevel.UNKNOWN
+        }
+}
+
+/** 定位精度等级，从细到粗。 */
+enum class PrecisionLevel(val label: String) {
+    /** 门牌 / 具体地点。 */
+    FEATURE("具体地点"),
+    /** 街道 / 道路。 */
+    STREET("街道"),
+    /** 区 / 县。 */
+    DISTRICT("区县"),
+    /** 市。 */
+    CITY("城市"),
+    /** 省。 */
+    PROVINCE("省份"),
+    /** 什么都没拿到。 */
+    UNKNOWN("未知")
 }
 
 /** 定位过程的阶段（UI 可据此显示不同文案）。 */
@@ -122,7 +193,7 @@ suspend fun locateCurrentPlace(
     }
     Log.d(TAG, "locate: 坐标 ${location.latitude}, ${location.longitude} via ${location.provider}")
 
-    // ---------- 3. 反解城市名 ----------
+    // ---------- 3. 反解地名（省/市/区/街道，能拿到几级算几级） ----------
     onStage(LocateStage.REVERSE_GEOCODING)
     val address = reverseGeocode(appContext, location.latitude, location.longitude)
 
@@ -130,11 +201,24 @@ suspend fun locateCurrentPlace(
     return LocatedPlace(
         latitude = location.latitude,
         longitude = location.longitude,
-        cityName = address?.locality ?: address?.subAdminArea,
-        adminName = address?.adminArea,
+        // 逐级映射。注意几个易踩的点：
+        //   · adminArea     = 省（「安徽省」）
+        //   · locality      = 市（「淮南市」）；**直辖市常为空**，此时用 subAdminArea 兜
+        //   · subLocality   = 区（「田家庵区」）—— 街道精度的关键字段
+        //   · thoroughfare  = 街道 / 道路（「洞山街道」）
+        //   · featureName   = 门牌 / 地点名，多数返回为空
+        // 每个字段都先 trim + 去空串，避免拿到 "" 让 UI 显示成空白。
+        province = address?.adminArea.clean(),
+        city = (address?.locality ?: address?.subAdminArea).clean(),
+        district = address?.subLocality.clean(),
+        street = address?.thoroughfare.clean(),
+        feature = address?.featureName.clean(),
         provider = location.provider ?: "unknown"
     )
 }
+
+/** 把可能为 null / 空白 / 仅空格的字符串规整成 null，避免 UI 显示空。 */
+private fun String?.clean(): String? = this?.trim()?.takeIf { it.isNotEmpty() }
 
 /**
  * 三级降级地拿一次坐标。
@@ -221,8 +305,25 @@ private suspend fun reverseGeocode(
         try {
             @Suppress("DEPRECATION")
             val list = Geocoder(context, Locale.CHINA)
-                .getFromLocation(latitude, longitude, 1)
-            list?.firstOrNull()
+                .getFromLocation(latitude, longitude, 3)
+            // 逐条打日志：方便在真机上直接看出「这台设备到底给了哪几级」。
+            // 不同厂商的 Geocoder 返回条数和字段完整度差异极大，
+            // 有了这些日志就能判断"街道级拿不到"是代码问题还是服务问题。
+            list?.forEachIndexed { i, a ->
+                Log.d(
+                    TAG,
+                    "逆地理[$i] adminArea=${a.adminArea} locality=${a.locality} " +
+                        "subAdminArea=${a.subAdminArea} subLocality=${a.subLocality} " +
+                        "thoroughfare=${a.thoroughfare} featureName=${a.featureName}"
+                )
+            }
+            // 取「信息量最大」的一条，而不是盲取第一条：
+            // 有些设备第一条只有省市，第二条才带区 —— 谁更细用谁。
+            // 空列表时 maxByOrNull 自然返回 null，无需再兜一次。
+            list?.maxByOrNull { a ->
+                listOf(a.subLocality, a.thoroughfare, a.featureName)
+                    .count { !it.isNullOrBlank() }
+            }
         } catch (t: Throwable) {
             Log.w(TAG, "逆地理编码抛异常: ${t.message}")
             null

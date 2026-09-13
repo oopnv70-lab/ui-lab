@@ -47,6 +47,7 @@ import com.oopnv70.uilab.location.LocateStage
 import com.oopnv70.uilab.location.LocateUiState
 import com.oopnv70.uilab.location.LocationPermissionState
 import com.oopnv70.uilab.location.LocationPermissions
+import com.oopnv70.uilab.location.PrecisionLevel
 import com.oopnv70.uilab.location.cityDisplayName
 import com.oopnv70.uilab.location.description
 import com.oopnv70.uilab.location.isPermanentlyDenied
@@ -1506,7 +1507,19 @@ private fun LocationPermissionCard(
             LocateStage.REVERSE_GEOCODING -> "正在解析位置…"
             else -> "正在定位…"
         }
-        is LocateUiState.Success -> "定位到：${locateState.place.displayName}"
+        // 定位成功：显示从省到街道的完整地址 + 括注精度等级。
+        // 括注精度的原因是：不同机型能拿到的层级差别很大，
+        // 明确告诉用户"只到市区"比含糊地显示一个城市名更诚实。
+        is LocateUiState.Success -> {
+            val p = locateState.place
+            val level = p.precisionLevel
+            // 未知等级时不显示括注，避免出现「（未知）」这种没信息量的尾巴
+            if (level == PrecisionLevel.UNKNOWN) {
+                "定位到：${p.displayName}"
+            } else {
+                "定位到：${p.displayName}（精度：${level.label}）"
+            }
+        }
         is LocateUiState.Failed -> locateState.reason
         LocateUiState.Idle -> state.description()
     }
