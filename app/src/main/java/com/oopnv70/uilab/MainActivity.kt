@@ -71,12 +71,15 @@ class MainActivity : ComponentActivity() {
                     //    光看枚举值分不清是「真没权限」还是「权限标记异常」，
                     //    把 FINE/COARSE 原始值一起带上并显示在界面上，
                     //    用户截图一次就能确诊，不用再来回猜。
-                    var diag by remember {
-                        mutableStateOf(currentPermissionDiagnostics(LocalContext.current))
-                    }
-
-                    val tick = resumeTick.value
+                    // ⚠️ 必须先取 context，再进 remember：LocalContext 是
+                    //    @Composable 属性，不能在 remember { } 的普通 lambda 里调用，
+                    //    否则编译报错（这正是上一版 CI 失败的原因）。
                     val context = LocalContext.current
+                    val tick = resumeTick.value
+
+                    var diag by remember(context) {
+                        mutableStateOf(currentPermissionDiagnostics(context))
+                    }
 
                     // 权限状态由 rememberLocationPermission 内部管理并返回。
                     val permissionStateFromHook = rememberLocationPermission(
