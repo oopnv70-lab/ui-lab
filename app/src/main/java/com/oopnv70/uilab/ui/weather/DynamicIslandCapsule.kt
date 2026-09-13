@@ -45,6 +45,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -66,6 +67,13 @@ import androidx.compose.ui.unit.sp
 
 /** 收起态高度（小药丸）。 */
 private val CollapsedHeight = 34.dp
+
+/**
+ * 灵动岛展开 / 收起的统一过渡时长（毫秒）。
+ * 宽度、高度、圆角、内部内容共用它，四条变化同起同落，
+ * 才不会有「宽度已经到位、高度还在追」的撕裂感。
+ */
+private const val IslandTransitionMillis = 300
 
 @Composable
 fun DynamicIslandCapsule(
@@ -104,10 +112,20 @@ fun DynamicIslandCapsule(
     //   - 展开态切到 fillMaxWidth()，animateContentSize 负责把这次
     //     尺寸变化（宽 + 高）平滑补间，不再撕裂。
     //   - 圆角用 animateDpAsState 与尺寸同步过渡。
+    //   - 展开时锚点固定在左上角（TopStart）：宽度向右推、高度向下长，
+    //     左边缘和顶边缘不动，视觉上就是「从左开始缩放」。
     // ------------------------------------------------------------------
+
+    // 所有过渡共用一个时长与缓动，宽 / 高 / 圆角才会同进同出，
+    // 不会出现「宽度先到、高度后到」的撕裂感。
+    val transitionSpec = tween<IntSize>(
+        durationMillis = IslandTransitionMillis,
+        easing = FastOutSlowInEasing
+    )
+
     val corner by animateDpAsState(
         targetValue = if (expanded) 26.dp else CollapsedHeight / 2,
-        animationSpec = tween(280, easing = FastOutSlowInEasing),
+        animationSpec = tween(IslandTransitionMillis, easing = FastOutSlowInEasing),
         label = "islandCorner"
     )
 
@@ -131,7 +149,13 @@ fun DynamicIslandCapsule(
             // 宽度：收起 = 按内容；展开 = 撑满。
             // 尺寸变化交给 animateContentSize 平滑处理（宽高一起补间）。
             .then(if (expanded) Modifier.fillMaxWidth() else Modifier.wrapContentWidth())
-            .animateContentSize()
+            // 显式指定 TopStart 对齐：宽高变化都以左上角为锚点，
+            // 左边缘与顶边缘保持不动，看起来就是「从左边开始向右下缩放」。
+            // 宽和高共用同一个 animationSpec，速度完全一致。
+            .animateContentSize(
+                animationSpec = transitionSpec,
+                alignment = Alignment.TopStart
+            )
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -201,14 +225,15 @@ fun DynamicIslandCapsule(
                 }
 
                 // ---------------- 展开态内容 ----------------
+                // 高度动画与外框共用同一时长，内容长出来和外框变高的节奏一致。
                 AnimatedVisibility(
                     visible = expanded,
                     enter = expandVertically(
-                        animationSpec = tween(300, easing = FastOutSlowInEasing),
+                        animationSpec = tween(IslandTransitionMillis, easing = FastOutSlowInEasing),
                         expandFrom = Alignment.Top
-                    ) + fadeIn(tween(200, delayMillis = 60)),
+                    ) + fadeIn(tween(180, delayMillis = 60)),
                     exit = shrinkVertically(
-                        animationSpec = tween(240, easing = FastOutSlowInEasing),
+                        animationSpec = tween(IslandTransitionMillis, easing = FastOutSlowInEasing),
                         shrinkTowards = Alignment.Top
                     ) + fadeOut(tween(120))
                 ) {
