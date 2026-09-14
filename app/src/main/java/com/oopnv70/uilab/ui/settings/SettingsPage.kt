@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.oopnv70.uilab.glass.GlassFeature
 import com.oopnv70.uilab.settings.AppSettingsState
 import com.oopnv70.uilab.settings.TemperatureUnit
 import com.oopnv70.uilab.settings.ThemeMode
@@ -59,13 +60,37 @@ import com.oopnv70.uilab.ui.weather.mdiCog
 /** 设置页所有可选的分节。 */
 private val ThemeModes = ThemeMode.entries.toList()
 private val TemperatureUnits = TemperatureUnit.entries.toList()
-private val ThemeStyles = ThemeStyle.entries.toList()
+
+/**
+ * 「风格」这一行实际展示的选项。
+ *
+ * 液态玻璃被 [GlassFeature.enabled] 熔断时从列表里**移除**，而不是保留一个
+ * 选了也不生效的按钮 —— 看得见却点不动，比不给这个选项更让人困惑。
+ * 枚举本身与渲染实现都保留，开关打开后这里会自动恢复。
+ */
+private val ThemeStyles = ThemeStyle.entries
+    .filter { it != ThemeStyle.LIQUID_GLASS || GlassFeature.enabled }
+
+/**
+ * 当前风格在 [ThemeStyles] 里的下标。
+ *
+ * 老版本可能已经把 `LIQUID_GLASS` 写进了偏好设置；它从列表里消失后，
+ * `indexOf` 会返回 -1，界面上会「一个都没选中」。这里兜底到 [ThemeStyle.DEFAULT]，
+ * 保证始终有一项处于选中态。
+ */
+private fun selectedStyleIndex(style: ThemeStyle): Int {
+    val index = ThemeStyles.indexOf(style)
+    return if (index >= 0) index else ThemeStyles.indexOf(ThemeStyle.DEFAULT).coerceAtLeast(0)
+}
 
 /**
  * 「风格」这一行的说明文字。
  *
  * 特意把「实时渲染」写出来：用户选玻璃之前应该知道它会持续占用 GPU，
  * 而不是选完才发现掉帧。诚实说明比事后道歉便宜。
+ *
+ * 注意：液态玻璃被 [GlassFeature] 熔断时，[ThemeStyles] 只剩「默认」一项，
+ * 这一行会被整行隐藏，所以这里的措辞只在功能可用时才会被看到。
  */
 private const val SettingsStylesDescription =
     "默认：实心卡片；液态玻璃：真折射 + 高光，实时渲染（较耗性能）"
@@ -128,20 +153,25 @@ fun SettingsPage(
                             }
                         )
                         CardDivider()
-                        // 主题风格：默认实心卡片 / 液态玻璃
+                        // 风格：默认实心卡片 / 液态玻璃
                         //
                         // 这是与「主题」正交的第二个维度：主题管亮暗，
                         // 风格管材质。所以不合并成一个下拉。
-                        ChoiceRow(
-                            title = "风格",
-                            subtitle = SettingsStylesDescription,
-                            options = ThemeStyles.map { it.label },
-                            selectedIndex = ThemeStyles.indexOf(settings.themeStyle),
-                            onSelect = { index ->
-                                onSettingsChange(settings.copy(themeStyle = ThemeStyles[index]))
-                            }
-                        )
-                        CardDivider()
+                        //
+                        // 液态玻璃被熔断后 ThemeStyles 只剩「默认」一项，此时
+                        // 「只有一个选项的选择器」纯属噪音，整行（含分隔线）都不渲染。
+                        if (ThemeStyles.size > 1) {
+                            ChoiceRow(
+                                title = "风格",
+                                subtitle = SettingsStylesDescription,
+                                options = ThemeStyles.map { it.label },
+                                selectedIndex = selectedStyleIndex(settings.themeStyle),
+                                onSelect = { index ->
+                                    onSettingsChange(settings.copy(themeStyle = ThemeStyles[index]))
+                                }
+                            )
+                            CardDivider()
+                        }
                         // 动态取色：开关
                         SwitchRow(
                             title = "动态取色",
