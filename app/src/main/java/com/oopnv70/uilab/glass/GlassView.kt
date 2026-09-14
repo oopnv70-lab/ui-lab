@@ -14,26 +14,38 @@ import android.view.View
 import androidx.annotation.RequiresApi
 
 // =====================================================================
-// 真·液态玻璃 · 第三步：GlassView（抓背景 + 跑 shader）
+// 真·液态玻璃 · 第三步：GlassView（跑 shader 的绘制层）
 // =====================================================================
 // 为什么必须是自定义 View，而不是纯 Compose：
 //
 //   Compose 的 Modifier.blur() 只能模糊**自己**，拿不到身后的内容。
-//   而液态玻璃的全部意义在于「折射身后的东西」。
-//
-//   Android 里唯一能拿到"身后内容"的路径是：
-//   在 View 的 dispatchDraw 里，先把父容器画到一块离屏 Bitmap 上，
-//   再把这块 Bitmap 当作贴图喂给 shader。
+//   而液态玻璃的全部意义在于「折射身后的东西」，所以必须有一个能
+//   直接操纵 Canvas / Paint / RuntimeShader 的绘制层。
 //
 // 执行流程（每帧）：
-//   ① 让父容器把「不含本 View 的内容」渲染到 offscreen Canvas
-//   ② 从 offscreen 里裁出「本 View 所在位置」的那块 = backdrop
-//   ③ 把 backdrop + SDF 传给 RuntimeShader
-//   ④ 用 Paint(shader) 把自己画到真实 Canvas 上
+//   ① 取背景贴图（backdrop）
+//   ② backdrop + SDF 一起喂给 AGSL RuntimeShader
+//   ③ 用 Paint(shader) 把自己那一块画出来
 //
-// ⚠️ 关键性能设计（必须保留）：
-//   SDF 是静态的 → **只在尺寸变化时算一次**，此后每帧只是 shader 合成。
-//   这是本方案能跑到可用帧率的前提。
+// ⚠️⚠️ 三条用血换来的铁律，改这个文件前务必读一遍 ⚠️⚠️
+//
+//   1) 【绝不在 Bitmap 的 Canvas 上跑 shader】
+//      Bitmap → Canvas 一定是软件 canvas，而 RuntimeShader 只支持硬件。
+//      在软件 canvas 上画它必抛：
+//        IllegalArgumentException: Software rendering doesn't support RuntimeShader
+//      真机上就是因此闪退的（HONOR AAK-AN00 / Android 17）。
+//
+//   2) 【绝不 rootView.draw(软件Canvas) 去抓背景】
+//      Compose 的 rootView 是 AndroidComposeView，重绘它会连带重绘
+//      子树里的其他 GlassView（胶囊栏、齿轮），那些 View 的 onDraw
+//      拿到软件 canvas 后踩中第 1 条 → 崩；而且它会递归回自己。
+//
+//   3) 【背景只能由上层 provide】
+//      唯一没有副作用的路径是调用方用 setBackdropSource() 把背景位图
+//      交进来。抓不到就退化成磨砂色 —— 平淡，但永远不崩、不黑。
+//
+// ⚠️ 性能前提：SDF 是静态的，**只在尺寸变化时算一次**，此后每帧
+//    只是 shader 合成。这是本方案能跑到可用帧率的关键。
 // =====================================================================
 
 @RequiresApi(Build.VERSION_CODES.S)
@@ -49,11 +61,7 @@ class GlassView @JvmOverloads constructor(
     // ---- SDF（缓存，形状不变就不重算）----
     private var sdfBitmap: Bitmap? = null
 
-    // ---- 离屏画布：用来抓「身后的内容」----
-    private var offscreen: Bitmap? = null
-    private var offscreenCanvas: Canvas? = null
-
-    // ---- backdrop：从离屏内容里裁出来的、本 View 位置的那一块 ----
+    // ---- backdrop：喂给 shader 的背景贴图（本 View 尺寸）----
     private var backdrop: Bitmap? = null
 
     private val glassPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -89,16 +97,27 @@ class GlassView @JvmOverloads constructor(
     // =================================================================
     // 尺寸变化 → 重建 SDF 与离屏缓冲
     // =================================================================
+    init {
+        // ⚠️ 关键：强制本 View 拥有**自己的硬件层**。
+        //
+        // 不加这句的话，Compose 通过 AndroidViewsHandler.drawView 录制
+        // 这个 AndroidView 时，onDraw 可能拿到**软件** canvas，而
+        // RuntimeShader 在软件 canvas 上会直接抛：
+        //   IllegalArgumentException: Software rendering doesn't support RuntimeShader
+        // 真机上就是这么闪退的。
+        //
+        // 有了硬件层之后，系统会先把本 View 画进一张硬件缓冲，
+        // 再交给合成器，onDraw 拿到的一定是硬件加速的 canvas。
+        //
+        // 只影响这一个 View，不改变它的大小/布局与触摸行为。
+        setLayerType(LAYER_TYPE_HARDWARE, null)
+    }
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         if (w <= 0 || h <= 0) return
 
-        // 离屏画布：装父容器的内容
-        offscreen?.recycle()
-        offscreen = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        offscreenCanvas = Canvas(offscreen!!)
-
-        // backdrop：最终喂给 shader 的那块
+        // backdrop：喂给 shader 的背景贴图
         backdrop?.recycle()
         backdrop = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
 
@@ -161,8 +180,28 @@ class GlassView @JvmOverloads constructor(
     override fun onDraw(canvas: Canvas) {
         if (width <= 0 || height <= 0) return
 
-        val bd = backdrop ?: return
-        val sdf = sdfBitmap ?: return
+        // ⚠️⚠️ 这里曾经是崩溃源，务必保留这个守卫 ⚠️⚠️
+        //
+        // 实测崩溃（真机 HONOR AAK-AN00 / Android 17）：
+        //   java.lang.IllegalArgumentException:
+        //     Software rendering doesn't support RuntimeShader
+        //       at android.graphics.Canvas.drawRect(Canvas.java:2162)
+        //       at GlassView.onDraw(GlassView.kt:191)
+        //
+        // Compose 会通过 AndroidViewsHandler.drawView 录制 AndroidView，
+        // 在这个过程中给过来的 canvas 可能是**软件** canvas。
+        // 而 AGSL 的 RuntimeShader 只有硬件管线能跑 —— 软件 canvas 上
+        // 画它就必然抛 IllegalArgumentException，直接把进程干掉。
+        //
+        // 所以：不是硬件加速就**不碰 shader**，退化成一片磨砂色。
+        // 少一点折射远好过闪退。
+        if (!canvas.isHardwareAccelerated) {
+            drawFallback(canvas)
+            return
+        }
+
+        val bd = backdrop ?: run { drawFallback(canvas); return }
+        val sdf = sdfBitmap ?: run { drawFallback(canvas); return }
 
         // ---- ① 抓背景 ----
         captureBackdropIfNeeded(bd)
@@ -188,92 +227,84 @@ class GlassView @JvmOverloads constructor(
         // onDraw 的 canvas 已经以本 View 左上角为原点，
         // 所以直接画 0..w / 0..h 即可，不需要 translate。
         glassPaint.shader = shader
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), glassPaint)
+        try {
+            canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), glassPaint)
+        } catch (t: Throwable) {
+            // 任何平台差异导致的绘制异常都不该杀进程：
+            // 退回磨砂色，界面照常可用。
+            glassPaint.shader = null
+            drawFallback(canvas)
+        }
+    }
+
+    /**
+     * 兜底绘制：一片半透明磨砂色，完全走普通 Paint，不涉及 shader。
+     *
+     * ⚠️ 这个方法必须「绝对安全」：它出现在所有异常路径上，
+     *    如果它自己也抛，就失去了兜底的意义。
+     */
+    private fun drawFallback(canvas: Canvas) {
+        try {
+            glassPaint.shader = null
+            glassPaint.color = fallbackColor
+            canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), glassPaint)
+        } catch (_: Throwable) {
+            // 连兜底都失败就什么都不画。绝不再往外抛。
+        }
     }
 
     /**
      * 抓取「本 View 身后」的内容到 [backdrop]。
      *
      * 策略（按可靠性从高到低）：
-     *   1) 如果上层通过 [setBackdropSource] 提供了背景 Bitmap，直接用
-     *   2) 否则尝试从 root view 渲染一次（仅在需要重抓时）
-     *   3) 都不行 → 用当前主题的中性色填充，**绝不留下黑色**
+     *   1) 上层通过 [setBackdropSource] 主动提供的 Bitmap
+     *   2) 都拿不到 → 磨砂色兜底，**绝不留黑，也绝不留黑屏**
      *
-     * ⚠️ 第 3 条是关键：即使抓不到背景，玻璃也必须是"半透明的乳白"，
-     *    而不是"黑块"。宁可退化得平淡，也不能看起来像坏了。
+     * ═══════════════════════════════════════════════════════════════
+     * ⚠️ 血泪教训：这里曾经有一条「把 rootView 画进 Bitmap」的路径，
+     *    它是真机闪退的元凶，**永远不要再加回来**：
+     *
+     *      Bitmap → Canvas 必然是**软件** canvas，
+     *      而 rootView（Compose 的 AndroidComposeView）重绘时，
+     *      会连带重绘它子树里的**其他 GlassView**（比如胶囊导航栏），
+     *      那些 GlassView 的 onDraw 拿到软件 canvas 之后跑 AGSL
+     *      RuntimeShader，直接抛：
+     *
+     *        IllegalArgumentException:
+     *          Software rendering doesn't support RuntimeShader
+     *
+     *      而且 rootView.draw() 会递归回到自己 → 无限重绘。
+     *
+     * ⚠️ 也**不要**改用 PixelCopy：
+     *    PixelCopy 只能对着 Window / SurfaceView 发起，对着 View 没有重载；
+     *    而且它读的是「已合成完毕的缓冲」，在 onDraw 里发起会形成
+     *    「我要画 → 我要先读我刚画的东西」的循环依赖，读到的永远是上一帧
+     *    甚至空帧。放在这条链路上只会引入新的不确定性。
+     *
+     * 结论：背景**只能由上层提供**。Compose 侧知道背景长什么样，
+     *      把那张位图交给玻璃，是唯一没有副作用的路径。
+     * ═══════════════════════════════════════════════════════════════
      */
     private fun captureBackdropIfNeeded(target: Bitmap) {
         if (!backdropDirty) return
-        backdropDirty = false
 
-        val bc = Canvas(target)
-        bc.drawColor(0, PorterDuff.Mode.CLEAR)
-
-        // ---- 路径 1：上层显式提供 ----
+        // ---- 路径 1：上层显式提供（同步，最可靠） ----
         val src = backdropSource
         if (src != null && !src.isRecycled) {
+            backdropDirty = false
+            val bc = Canvas(target)
+            bc.drawColor(0, PorterDuff.Mode.CLEAR)
             val p = Paint(Paint.FILTER_BITMAP_FLAG)
             bc.drawBitmap(src, null, android.graphics.Rect(0, 0, width, height), p)
             return
         }
 
-        // ---- 路径 2：从根 View 渲染 ----
-        // 用 getLocationOnScreen 拿到自己在屏幕里的位置，
-        // 然后把 rootView 画到一张整屏 Bitmap 上，再裁自己那一块。
-        val root = rootView
-        if (root != null && root.width > 0 && root.height > 0) {
-            val full = try {
-                Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
-            } catch (t: Throwable) {
-                null
-            }
-            if (full != null) {
-                try {
-                    val fc = Canvas(full)
-                    // 抓背景时把自己藏起来，否则会把上一帧的玻璃叠进去
-                    val wasVisible = visibility
-                    visibility = INVISIBLE
-                    try {
-                        root.draw(fc)
-                    } finally {
-                        visibility = wasVisible
-                    }
-                    val loc = IntArray(2)
-                    getLocationOnScreen(loc)
-                    val left = loc[0].coerceIn(0, full.width)
-                    val top = loc[1].coerceIn(0, full.height)
-                    val right = (loc[0] + width).coerceIn(0, full.width)
-                    val bottom = (loc[1] + height).coerceIn(0, full.height)
-                    if (right > left && bottom > top) {
-                        val crop = Bitmap.createBitmap(full, left, top, right - left, bottom - top)
-                        val p = Paint(Paint.FILTER_BITMAP_FLAG)
-                        bc.drawBitmap(crop, null, android.graphics.Rect(0, 0, width, height), p)
-                        crop.recycle()
-                    }
-                } catch (t: Throwable) {
-                    // 渲染失败就退到路径 3，不抛
-                } finally {
-                    full.recycle()
-                }
-            }
-        }
-
-        // ---- 路径 3：兜底中性色（半透明乳白，绝不是黑） ----
-        // 判断"上面两条是否真的画进了东西"：采样中心像素的 alpha。
-        // 如果中心像素完全透明，说明什么都没抓到，用兜底色覆盖。
-        //
-        // ⚠️ getPixel 的坐标必须落在 bitmap 内：极窄/极扁的 View
-        //    （比如 1px 高的分隔线）会越界崩溃，这里做一次夹取。
-        val px = (width / 2).coerceIn(0, target.width - 1)
-        val py = (height / 2).coerceIn(0, target.height - 1)
-        if (px >= 0 && py >= 0) {
-            val probe = target.getPixel(px, py)
-            if (android.graphics.Color.alpha(probe) == 0) {
-                bc.drawColor(fallbackColor)
-            }
-        } else {
-            bc.drawColor(fallbackColor)
-        }
+        // ---- 路径 2：没有背景可用 → 磨砂兜底 ----
+        // 不抛、不崩、不黑。用户看到的是一块得体的半透明磨砂玻璃。
+        backdropDirty = false
+        val bc = Canvas(target)
+        bc.drawColor(0, PorterDuff.Mode.CLEAR)
+        bc.drawColor(fallbackColor)
     }
 
     /** 兜底色：半透明乳白。抓不到背景时用它，视觉上是"雾面玻璃"。 */
@@ -306,7 +337,6 @@ class GlassView @JvmOverloads constructor(
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
-        offscreen?.recycle(); offscreen = null
         backdrop?.recycle(); backdrop = null
         sdfBitmap?.recycle(); sdfBitmap = null
     }
