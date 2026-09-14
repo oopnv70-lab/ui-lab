@@ -48,6 +48,10 @@ import androidx.annotation.RequiresApi
 //    只是 shader 合成。这是本方案能跑到可用帧率的关键。
 // =====================================================================
 
+/** 诊断开关：排查玻璃"看不见"这类问题时临时打开。
+ *  打开后每次尺寸变化会往 logcat 打一行 GlassView 的状态。 */
+private const val DEBUG_GLASS = true
+
 @RequiresApi(Build.VERSION_CODES.S)
 class GlassView @JvmOverloads constructor(
     context: Context,
@@ -117,6 +121,9 @@ class GlassView @JvmOverloads constructor(
         super.onSizeChanged(w, h, oldw, oldh)
         if (w <= 0 || h <= 0) return
 
+        // 尺寸变了 → 允许重新打一次诊断日志
+        loggedFirstDraw = false
+
         // backdrop：喂给 shader 的背景贴图
         backdrop?.recycle()
         backdrop = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -178,6 +185,16 @@ class GlassView @JvmOverloads constructor(
     //   它身后画完的内容。我们从**根 View** 抓一次整屏位图，
     //   再按自己在屏幕上的位置裁出那一块当作 backdrop。
     override fun onDraw(canvas: Canvas) {
+        // ---- 诊断日志：只在尺寸变化/首次绘制时打，避免刷屏 ----
+        if (DEBUG_GLASS && !loggedFirstDraw) {
+            loggedFirstDraw = true
+            android.util.Log.i(
+                "GlassView",
+                "onDraw: w=$width h=$height hw=${canvas.isHardwareAccelerated} " +
+                    "backdrop=${backdrop != null} sdf=${sdfBitmap != null}"
+            )
+        }
+
         if (width <= 0 || height <= 0) return
 
         // ⚠️⚠️ 这里曾经是崩溃源，务必保留这个守卫 ⚠️⚠️
@@ -307,11 +324,24 @@ class GlassView @JvmOverloads constructor(
         bc.drawColor(fallbackColor)
     }
 
-    /** 兜底色：半透明乳白。抓不到背景时用它，视觉上是"雾面玻璃"。 */
-    private var fallbackColor: Int = 0x66E8EEF6.toInt()
+    /**
+     * 兜底色：**不透明**的浅乳白。
+     *
+     * ⚠️ 这里原本是 0x66E8EEF6（40% 透明的白），结果是"连白都看不见"：
+     *    GlassView 通过 AndroidView 挂在 Compose 里，自身没有背景，
+     *    而且 init 里要了 LAYER_TYPE_HARDWARE —— 这个层的底是**透明的**。
+     *    40% 的白叠在透明上，就是一块几乎不可见的幽灵。
+     *
+     *    兜底的职责是"再怎么退化，用户也得看见一块玻璃"，
+     *    所以必须给足不透明度，让它自己就是一块实心的雾面玻璃。
+     */
+    private var fallbackColor: Int = 0xF2EEF2F8.toInt()
 
     private var backdropSource: Bitmap? = null
     private var backdropDirty = true
+
+    /** 诊断用：本次尺寸下是否已经打过日志。 */
+    private var loggedFirstDraw = false
 
     /**
      * 由上层提供一个「背景快照」。
