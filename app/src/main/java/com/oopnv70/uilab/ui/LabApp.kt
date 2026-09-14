@@ -401,7 +401,7 @@ fun LabApp(
                         cornerRadiusDp = 999f,          // 圆形
                         refract = GlassDefaults.REFRACT,
                         tint = GlassDefaults.TINT,
-                        backdropBlur = 0f
+                        backdropBlur = 5f
                     )
                 }
                 Icon(

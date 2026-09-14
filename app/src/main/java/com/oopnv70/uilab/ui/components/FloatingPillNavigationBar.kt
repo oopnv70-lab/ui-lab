@@ -124,7 +124,7 @@ fun FloatingPillNavigationBar(
                     curve = GlassDefaults.CURVE,
                     chroma = GlassDefaults.CHROMA,
                     tint = GlassDefaults.TINT,
-                    backdropBlur = 0f
+                    backdropBlur = 5f
                 )
             }
 

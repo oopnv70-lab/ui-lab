@@ -1,31 +1,35 @@
 package com.oopnv70.uilab.glass
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Paint
-import android.graphics.PorterDuff
+import android.graphics.RenderEffect
+import android.graphics.RenderNode
 import android.graphics.RuntimeShader
 import android.graphics.Shader
 import android.os.Build
 import android.util.AttributeSet
+import android.util.Log
 import android.view.View
 import androidx.annotation.RequiresApi
 
 // =====================================================================
-// 真·液态玻璃 · 第三步：GlassView（跑 shader 的绘制层）
+// 真·液态玻璃 · GlassView（跑 shader 的绘制层）
 // =====================================================================
 // 为什么必须是自定义 View，而不是纯 Compose：
 //
 //   Compose 的 Modifier.blur() 只能模糊**自己**，拿不到身后的内容。
 //   而液态玻璃的全部意义在于「折射身后的东西」，所以必须有一个能
-//   直接操纵 Canvas / Paint / RuntimeShader 的绘制层。
+//   直接操纵 Canvas / RenderNode / RuntimeShader 的绘制层。
 //
-// 执行流程（每帧）：
-//   ① 取背景贴图（backdrop）
-//   ② backdrop + SDF 一起喂给 AGSL RuntimeShader
-//   ③ 用 Paint(shader) 把自己那一块画出来
+// ── 每帧的执行流程 ──────────────────────────────────────────────
+//
+//   ① recordBackdrop()：把**背景来源视图**（玻璃身后那一层）录进
+//      本 View 的 RenderNode。这一步用的是硬件画布，并且通过
+//      BackdropCapture 把玻璃自己从画面里剔除。
+//   ② shader 参数写进 RuntimeShader 的 uniform。
+//   ③ 用 RenderEffect 链把「模糊 → 折射 shader」挂到 RenderNode 上。
+//   ④ canvas.drawRenderNode() 输出。
 //
 // ⚠️⚠️ 三条用血换来的铁律，改这个文件前务必读一遍 ⚠️⚠️
 //
@@ -40,17 +44,22 @@ import androidx.annotation.RequiresApi
 //      子树里的其他 GlassView（胶囊栏、齿轮），那些 View 的 onDraw
 //      拿到软件 canvas 后踩中第 1 条 → 崩；而且它会递归回自己。
 //
-//   3) 【背景只能由上层 provide】
-//      唯一没有副作用的路径是调用方用 setBackdropSource() 把背景位图
-//      交进来。抓不到就退化成磨砂色 —— 平淡，但永远不崩、不黑。
+//      ✅ 正确做法（本文件现在用的）：录制走 RenderNode.beginRecording()，
+//         它给的是**硬件**画布；排除自己走 BackdropCapture 的
+//         「把通往自己的那条分支置为 INVISIBLE」。见 BackdropCapture.kt。
+//
+//   3) 【模糊必须挂在 RenderNode 上，不是 Paint 上】
+//      Paint.setRenderEffect 在本项目编译环境不可解析（已删）；
+//      正确写法是 renderNode.setRenderEffect(RenderEffect...)。
 //
 // ⚠️ 性能前提：SDF 是静态的，**只在尺寸变化时算一次**，此后每帧
-//    只是 shader 合成。这是本方案能跑到可用帧率的关键。
+//    只是 uniform + 录制。这是本方案能跑到可用帧率的关键。
 // =====================================================================
 
-/** 诊断开关：排查玻璃"看不见"这类问题时临时打开。
- *  打开后每次尺寸变化会往 logcat 打一行 GlassView 的状态。 */
-private const val DEBUG_GLASS = true
+/** 诊断开关：排查玻璃渲染问题时临时打开，交付前改回 false。 */
+private const val DEBUG_GLASS = false
+
+private const val TAG = "GlassView"
 
 @RequiresApi(Build.VERSION_CODES.S)
 class GlassView @JvmOverloads constructor(
@@ -62,11 +71,11 @@ class GlassView @JvmOverloads constructor(
     // ---- shader ----
     private val shader: RuntimeShader = createLiquidGlassShader()
 
-    // ---- SDF（缓存，形状不变就不重算）----
-    private var sdfBitmap: Bitmap? = null
+    // ---- 背景录制节点 ----
+    /** 承载「背景 + 效果链」的硬件 RenderNode。 */
+    private val backdropNode = RenderNode("GlassBackdrop")
 
-    // ---- backdrop：喂给 shader 的背景贴图（本 View 尺寸）----
-    private var backdrop: Bitmap? = null
+    private val backdropCapture = BackdropCapture()
 
     private val glassPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         isFilterBitmap = true
@@ -88,32 +97,34 @@ class GlassView @JvmOverloads constructor(
     /**
      * 背景模糊半径（像素）。
      *
-     * ⚠️ 目前**不使用** Paint/RenderEffect 级模糊：
-     *    setRenderEffect 在本项目编译环境下无法解析，已移除。
-     *    液态玻璃的重点是「折射」而非「模糊」，模糊可后续在 shader 内实现。
-     *    这个字段保留作参数占位，避免 API 变动影响调用方。
+     * ⚠️ 上一轮这里写着「不使用」，因为 setRenderEffect 编译不过。
+     *    现在改用 RenderNode.setRenderEffect —— 这个 API 是存在的，
+     *    模糊终于真的挂上了。默认给一个轻微的值（液态玻璃的模糊是
+     *    「柔化」而不是「糊成一团」）。
      */
-    var backdropBlur: Float = 0f
+    var backdropBlur: Float = 6f
 
-    /** SDF 最大影响距离，即"玻璃厚度"。 */
-    var sdfMaxDistance: Int = 60
+    // ---- 背景来源 ----
+    /**
+     * 背景来源视图：玻璃要折射的是**它**的内容。
+     *
+     * 默认是直接父容器（Compose 下即承载本 AndroidView 的那一层），
+     * 这样可以折射到玻璃身后的整块 UI。上层可以用
+     * [setBackdropSourceView] 指定成更精确的视图（例如天气背景层）。
+     */
+    private var backdropSourceView: View? = null
+
+    /** 诊断用：本次尺寸下是否已经打过日志。 */
+    private var loggedFirstDraw = false
 
     // =================================================================
-    // 尺寸变化 → 重建 SDF 与离屏缓冲
+    // 尺寸变化 → 重建 SDF
     // =================================================================
     init {
-        // ⚠️ 关键：强制本 View 拥有**自己的硬件层**。
-        //
-        // 不加这句的话，Compose 通过 AndroidViewsHandler.drawView 录制
-        // 这个 AndroidView 时，onDraw 可能拿到**软件** canvas，而
-        // RuntimeShader 在软件 canvas 上会直接抛：
-        //   IllegalArgumentException: Software rendering doesn't support RuntimeShader
-        // 真机上就是这么闪退的。
-        //
-        // 有了硬件层之后，系统会先把本 View 画进一张硬件缓冲，
-        // 再交给合成器，onDraw 拿到的一定是硬件加速的 canvas。
-        //
-        // 只影响这一个 View，不改变它的大小/布局与触摸行为。
+        // ⚠️ 保留：强制本 View 拥有自己的硬件层。
+        //   虽然现在背景录制不再依赖它（录制用的是 RenderNode 的硬件画布），
+        //   但它仍然保证 onDraw 拿到的 canvas 是硬件加速的，
+        //   让 RuntimeShader 的绘制路径保持可用。
         setLayerType(LAYER_TYPE_HARDWARE, null)
     }
 
@@ -121,80 +132,82 @@ class GlassView @JvmOverloads constructor(
         super.onSizeChanged(w, h, oldw, oldh)
         if (w <= 0 || h <= 0) return
 
-        // 尺寸变了 → 允许重新打一次诊断日志
         loggedFirstDraw = false
-
-        // backdrop：喂给 shader 的背景贴图
-        backdrop?.recycle()
-        backdrop = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-
-        // 尺寸变了，原来抓的背景已经对不上位置了，必须重抓
-        backdropDirty = true
-
-        rebuildSdf(w, h)
     }
 
     /**
-     * 生成 SDF。
+     * 圆角半径（dp）。
      *
-     * ⚠️ 用「圆角矩形」而不是「本 View 的真实绘制结果」当形状源。
-     *
-     * 为什么要这样：真实绘制结果需要在 onSizeChanged 时先画一次自己，
-     * 而那时背景还没准备好，容易拿到空图 → SDF 全 0 → 没有折射。
-     * 我们所有的玻璃元素（按钮/导航栏/标题栏）本质都是圆角矩形，
-     * 直接按 View 尺寸 + 圆角半径构造一个 mask，稳定且可控。
+     * 由 shader 解析式使用：传给 uShapeR（像素）。
+     * 给一个大于 短边/2 的值即得到胶囊/圆形（默认 999 就是全圆角），
+     * 给较小的值则得到圆角矩形。
      */
-    private var cornerRadiusDp: Float = 999f   // 默认全圆角（胶囊/圆形）
+    private var cornerRadiusDp: Float = 999f
 
-    private fun rebuildSdf(w: Int, h: Int) {
-        val mask = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        val c = Canvas(mask)
-        val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = 0xFFFFFFFF.toInt()   // 不透明 = 玻璃内部
-        }
-        val r = cornerRadiusDp * resources.displayMetrics.density
-            .coerceAtMost(minOf(w, h) / 2f)
-        val rect = android.graphics.RectF(0f, 0f, w.toFloat(), h.toFloat())
-        c.drawRoundRect(rect, r, r, p)
-
-        sdfBitmap?.recycle()
-        sdfBitmap = generateSdf(mask, sdfMaxDistance)
-        mask.recycle()
-    }
-
-    /** 外部设置圆角（dp 值）。会触发 SDF 重建。 */
+    /** 外部设置圆角（dp 值）。只影响 shader 的 uniform，无需重建任何纹理。 */
     fun setCornerRadiusDp(dp: Float) {
         if (cornerRadiusDp == dp) return
         cornerRadiusDp = dp
-        if (width > 0 && height > 0) rebuildSdf(width, height)
         invalidate()
     }
 
-    // =================================================================
-    // 核心：抓背景 + 画玻璃
-    // =================================================================
-    //
-    // ⚠️ 这里用 onDraw 而不是 dispatchDraw。
-    //
-    // 为什么：dispatchDraw 是"画子 View"的钩子，在它里面调
-    //   parent.draw(offscreenCanvas) 会让整棵树（含 Compose 的
-    //   AndroidComposeView）重新绘制一遍，拿到的是未完成的缓冲 →
-    //   之前实机上看到的就是"一片黑"。
-    //
-    // onDraw 的时机是"本 View 正在被绘制"，此时共享缓冲里已经有
-    //   它身后画完的内容。我们从**根 View** 抓一次整屏位图，
-    //   再按自己在屏幕上的位置裁出那一块当作 backdrop。
-    override fun onDraw(canvas: Canvas) {
-        // ---- 诊断日志：只在尺寸变化/首次绘制时打，避免刷屏 ----
-        if (DEBUG_GLASS && !loggedFirstDraw) {
-            loggedFirstDraw = true
-            android.util.Log.i(
-                "GlassView",
-                "onDraw: w=$width h=$height hw=${canvas.isHardwareAccelerated} " +
-                    "backdrop=${backdrop != null} sdf=${sdfBitmap != null}"
-            )
-        }
+    /**
+     * 指定背景来源视图。
+     *
+     * 不调这个方法时，玻璃默认折射它的**直接父容器**（见 [effectiveBackdropSource]）。
+     * 想要折射某个特定区域（例如整页天气背景）时由上层显式指定。
+     */
+    fun setBackdropSourceView(view: View?) {
+        if (backdropSourceView === view) return
+        backdropSourceView = view
+        invalidate()
+    }
 
+    /**
+     * 实际使用的背景来源。
+     *
+     * ⚠️ 不能直接用 `parent`。
+     *
+     * Compose 的 AndroidView 会被包进它自己的内部容器，直接父级往往
+     * 只装着这块玻璃本身 —— 拿它当背景来源，录到的就是"玻璃自己身后的
+     * 空白"，折射出来还是一片纯色（这正是"看起来像白板"的一个成因）。
+     *
+     * 所以要沿父链往上找，跳过那些**只包裹本 View 的中间层**，直到找到
+     * 一个真正承载了其它内容的容器。判据：该容器有 ≥2 个可见子级，
+     * 或者它就是 Compose 的 AndroidComposeView。
+     */
+    private fun effectiveBackdropSource(): View? {
+        backdropSourceView?.let { return it }
+
+        var candidate: View? = parent as? View
+        var depth = 0
+        while (candidate != null && depth < 8) {
+            if (hasSiblingContent(candidate)) return candidate
+            candidate = candidate.parent as? View
+            depth++
+        }
+        // 找不到更合适的就退回直接父级（至少不会崩）
+        return parent as? View
+    }
+
+    /**
+     * 判断 [container] 是否"承载了除本玻璃之外的可见内容"。
+     *
+     * 这是我们能拿它当背景来源的前提：只有它身后有东西，折射才有意义。
+     */
+    private fun hasSiblingContent(container: View): Boolean {
+        if (container is android.view.ViewGroup) {
+            if (container.childCount >= 2) return true
+        }
+        // Compose 的宿主容器：它的内容由 Compose 绘制，childCount 不可靠，
+        // 但只要它有实际面积，就是最靠谱的背景来源。
+        return container.javaClass.name.contains("AndroidComposeView")
+    }
+
+    // =================================================================
+    // 核心：录制背景 + 画玻璃
+    // =================================================================
+    override fun onDraw(canvas: Canvas) {
         if (width <= 0 || height <= 0) return
 
         // ⚠️⚠️ 这里曾经是崩溃源，务必保留这个守卫 ⚠️⚠️
@@ -217,14 +230,77 @@ class GlassView @JvmOverloads constructor(
             return
         }
 
-        val bd = backdrop ?: run { drawFallback(canvas); return }
-        val sdf = sdfBitmap ?: run { drawFallback(canvas); return }
+        val source = effectiveBackdropSource()
 
-        // ---- ① 抓背景 ----
-        captureBackdropIfNeeded(bd)
+        if (DEBUG_GLASS && !loggedFirstDraw) {
+            loggedFirstDraw = true
+            Log.i(
+                TAG,
+                "onDraw: w=$width h=$height hw=true " +
+                    "source=${source?.javaClass?.simpleName}"
+            )
+        }
 
-        // ---- ② 传 uniform ----
+        // 背景来源拿不到 → 磨砂兜底。
+        if (source == null) {
+            drawFallback(canvas)
+            return
+        }
+
+        try {
+            drawGlass(canvas, source)
+        } catch (t: Throwable) {
+            // 任何平台差异导致的绘制异常都不该杀进程：
+            // 退回磨砂色，界面照常可用。
+            Log.w(TAG, "glass draw failed, falling back", t)
+            drawFallback(canvas)
+        }
+    }
+
+    /**
+     * 真正的液态玻璃绘制。
+     *
+     * ① 把背景来源录进 [backdropNode]（硬件画布，剔除玻璃自身）
+     * ② 把 uniform 全部写进 shader
+     * ③ 在 [backdropNode] 上挂「模糊 → 折射」的 RenderEffect 链
+     * ④ 输出节点
+     */
+    private fun drawGlass(canvas: Canvas, source: View) {
+        // ---- ① 录制背景 ----
+        // 记录玻璃相对背景来源的偏移：录制画布的原点要对齐到背景来源的
+        // 左上角，这样 shader 里的 uv 才能和背景内容一一对应。
+        getLocationOnScreen(locationOnScreen)
+        source.getLocationOnScreen(sourceLocationOnScreen)
+        val offsetX = (locationOnScreen[0] - sourceLocationOnScreen[0]).toFloat()
+        val offsetY = (locationOnScreen[1] - sourceLocationOnScreen[1]).toFloat()
+
+        // 录制区向外扩一圈 margin：让模糊和折射在边缘处也能采到真实内容，
+        // 而不是读到节点外的透明黑（那会在边缘拖出一圈发灰的脏边）。
+        val margin = (backdropBlur * 3f + 16f).toInt().coerceAtLeast(32)
+        val recW = width + 2 * margin
+        val recH = height + 2 * margin
+
+        // 节点定位：让节点坐标系里的 (margin, margin) 正好落在玻璃左上角，
+        // 也就是说节点相对玻璃左上角整体外扩 margin。
+        backdropNode.setPosition(-margin, -margin, width + margin, height + margin)
+
+        val recordingCanvas = backdropNode.beginRecording(recW, recH)
+        try {
+            // 对齐到背景来源原点，再把玻璃自己的位置偏出来
+            recordingCanvas.translate(margin - offsetX, margin - offsetY)
+            backdropCapture.draw(recordingCanvas, source, this)
+        } finally {
+            backdropNode.endRecording()
+        }
+
+        // ---- ② 写 uniform ----
         shader.setFloatUniform("uSize", width.toFloat(), height.toFloat())
+        shader.setFloatUniform("uMargin", margin.toFloat())
+        shader.setFloatUniform(
+            "uShapeR",
+            (cornerRadiusDp * resources.displayMetrics.density)
+                .coerceAtMost(minOf(width, height) / 2f)
+        )
         shader.setFloatUniform("uRefract", refract)
         shader.setFloatUniform("uCurve", curve)
         shader.setFloatUniform("uChroma", chroma)
@@ -235,23 +311,23 @@ class GlassView @JvmOverloads constructor(
         shader.setFloatUniform("uTintColor", tintColor[0], tintColor[1], tintColor[2])
         shader.setFloatUniform("uBrightness", brightness)
 
-        // 两张纹理：背景 + SDF
-        val tile = Shader.TileMode.CLAMP
-        shader.setInputShader("uBackdrop", BitmapShader(bd, tile, tile))
-        shader.setInputShader("uSdf", BitmapShader(sdf, tile, tile))
-
-        // ---- ③ 画玻璃 ----
-        // onDraw 的 canvas 已经以本 View 左上角为原点，
-        // 所以直接画 0..w / 0..h 即可，不需要 translate。
-        glassPaint.shader = shader
-        try {
-            canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), glassPaint)
-        } catch (t: Throwable) {
-            // 任何平台差异导致的绘制异常都不该杀进程：
-            // 退回磨砂色，界面照常可用。
-            glassPaint.shader = null
-            drawFallback(canvas)
+        // ---- ③ 效果链：模糊 → 折射 ----
+        // ⚠️ 关键是 backdropNode.setRenderEffect（不是 Paint.setRenderEffect）。
+        //    createChainEffect(outer, inner) 里 inner 是内层：背景先被模糊，
+        //    再交给 RuntimeShader 作 uBackdrop 输入。
+        val lensEffect = RenderEffect.createRuntimeShaderEffect(shader, "uBackdrop")
+        val effect = if (backdropBlur > 0.01f) {
+            RenderEffect.createChainEffect(
+                lensEffect,
+                RenderEffect.createBlurEffect(backdropBlur, backdropBlur, Shader.TileMode.CLAMP)
+            )
+        } else {
+            lensEffect
         }
+        backdropNode.setRenderEffect(effect)
+
+        // ---- ④ 输出 ----
+        canvas.drawRenderNode(backdropNode)
     }
 
     /**
@@ -271,60 +347,6 @@ class GlassView @JvmOverloads constructor(
     }
 
     /**
-     * 抓取「本 View 身后」的内容到 [backdrop]。
-     *
-     * 策略（按可靠性从高到低）：
-     *   1) 上层通过 [setBackdropSource] 主动提供的 Bitmap
-     *   2) 都拿不到 → 磨砂色兜底，**绝不留黑，也绝不留黑屏**
-     *
-     * ═══════════════════════════════════════════════════════════════
-     * ⚠️ 血泪教训：这里曾经有一条「把 rootView 画进 Bitmap」的路径，
-     *    它是真机闪退的元凶，**永远不要再加回来**：
-     *
-     *      Bitmap → Canvas 必然是**软件** canvas，
-     *      而 rootView（Compose 的 AndroidComposeView）重绘时，
-     *      会连带重绘它子树里的**其他 GlassView**（比如胶囊导航栏），
-     *      那些 GlassView 的 onDraw 拿到软件 canvas 之后跑 AGSL
-     *      RuntimeShader，直接抛：
-     *
-     *        IllegalArgumentException:
-     *          Software rendering doesn't support RuntimeShader
-     *
-     *      而且 rootView.draw() 会递归回到自己 → 无限重绘。
-     *
-     * ⚠️ 也**不要**改用 PixelCopy：
-     *    PixelCopy 只能对着 Window / SurfaceView 发起，对着 View 没有重载；
-     *    而且它读的是「已合成完毕的缓冲」，在 onDraw 里发起会形成
-     *    「我要画 → 我要先读我刚画的东西」的循环依赖，读到的永远是上一帧
-     *    甚至空帧。放在这条链路上只会引入新的不确定性。
-     *
-     * 结论：背景**只能由上层提供**。Compose 侧知道背景长什么样，
-     *      把那张位图交给玻璃，是唯一没有副作用的路径。
-     * ═══════════════════════════════════════════════════════════════
-     */
-    private fun captureBackdropIfNeeded(target: Bitmap) {
-        if (!backdropDirty) return
-
-        // ---- 路径 1：上层显式提供（同步，最可靠） ----
-        val src = backdropSource
-        if (src != null && !src.isRecycled) {
-            backdropDirty = false
-            val bc = Canvas(target)
-            bc.drawColor(0, PorterDuff.Mode.CLEAR)
-            val p = Paint(Paint.FILTER_BITMAP_FLAG)
-            bc.drawBitmap(src, null, android.graphics.Rect(0, 0, width, height), p)
-            return
-        }
-
-        // ---- 路径 2：没有背景可用 → 磨砂兜底 ----
-        // 不抛、不崩、不黑。用户看到的是一块得体的半透明磨砂玻璃。
-        backdropDirty = false
-        val bc = Canvas(target)
-        bc.drawColor(0, PorterDuff.Mode.CLEAR)
-        bc.drawColor(fallbackColor)
-    }
-
-    /**
      * 兜底色：**不透明**的浅乳白。
      *
      * ⚠️ 这里原本是 0x66E8EEF6（40% 透明的白），结果是"连白都看不见"：
@@ -337,37 +359,17 @@ class GlassView @JvmOverloads constructor(
      */
     private var fallbackColor: Int = 0xF2EEF2F8.toInt()
 
-    private var backdropSource: Bitmap? = null
-    private var backdropDirty = true
+    // 复用的坐标数组，避免每帧分配
+    private val locationOnScreen = IntArray(2)
+    private val sourceLocationOnScreen = IntArray(2)
 
-    /** 诊断用：本次尺寸下是否已经打过日志。 */
-    private var loggedFirstDraw = false
-
-    /**
-     * 由上层提供一个「背景快照」。
-     *
-     * 这是最可靠的路径 —— 调用方（Compose 侧）知道背景长什么样，
-     * 直接交给玻璃即可，玻璃不用自己去"回看"。
-     *
-     * ⚠️ 生命周期：这块 Bitmap **归调用方所有**，GlassView 只读不回收。
-     *    调用方想换背景就直接再调一次；不再需要时把它设为 null 即可。
-     */
-    fun setBackdropSource(bitmap: Bitmap?) {
-        if (backdropSource === bitmap) return
-        backdropSource = bitmap
-        backdropDirty = true
-        invalidate()
-    }
-
-    /** 通知玻璃：背景变了，需要重抓。 */
+    /** 通知玻璃：背景变了，需要重绘。 */
     fun markBackdropDirty() {
-        backdropDirty = true
         invalidate()
     }
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
-        backdrop?.recycle(); backdrop = null
-        sdfBitmap?.recycle(); sdfBitmap = null
+        backdropNode.discardDisplayList()
     }
 }
