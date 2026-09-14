@@ -284,13 +284,16 @@ class GlassView @JvmOverloads constructor(
         var candidate: View? = parent as? View
         var depth = 0
         while (candidate != null && depth < 8) {
-            if (hasSiblingContent(candidate)) return candidate
+            if (!isAndroidViewsHandler(candidate) && hasSiblingContent(candidate)) return candidate
             candidate = candidate.parent as? View
             depth++
         }
-        // 找不到更合适的就退回直接父级（至少不会崩）
-        return parent as? View
+        // 找不到可信背景源时必须返回 null，不能退回 AndroidViewsHandler 空壳。
+        return null
     }
+
+    private fun isAndroidViewsHandler(view: View): Boolean =
+        view.javaClass.name.endsWith("AndroidViewsHandler")
 
     /** 诊断：把整条父链的类名打出来，用来确认背景源解析找对没有。 */
     private fun dumpParentChain(): String {
