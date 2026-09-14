@@ -1,6 +1,8 @@
 package com.oopnv70.uilab.glass
 
 import android.os.Build
+import android.view.View
+import android.view.ViewGroup
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -39,6 +41,10 @@ fun LiquidGlassSurface(
                     )
                     isClickable = false
                     isFocusable = false
+                    // 库默认捕获直接父容器，而 Compose 的 AndroidView 外面是
+                    // 空壳 AndroidViewsHandler（不画任何内容），录它必然是全黑。
+                    // 显式向上跳过空壳，指向真正承载内容的 AndroidComposeView。
+                    post { backdropSource = findComposeBackdrop(this) }
                 }
             },
             update = { view ->
@@ -50,6 +56,31 @@ fun LiquidGlassSurface(
         )
         content()
     }
+}
+
+/** 找一个真正承载内容的 Compose 宿主，跳过 AndroidView 的空壳父级。 */
+private fun findComposeBackdrop(view: View): View? {
+    var candidate: View? = view.parent as? View
+    var hops = 0
+    while (candidate != null && hops < 6) {
+        val name = candidate.javaClass.name
+        if (name.contains("AndroidComposeView")) return candidate
+        candidate = candidate.parent as? View
+        hops++
+    }
+    // 找不到 Compose 宿主时退而求其次：找一个非空壳的真实 ViewGroup
+    var fallback: View? = view.parent as? View
+    hops = 0
+    while (fallback != null && hops < 6) {
+        if (fallback !is ViewGroup ||
+            !fallback.javaClass.name.endsWith("AndroidViewsHandler")
+        ) {
+            return fallback
+        }
+        fallback = fallback.parent as? View
+        hops++
+    }
+    return null
 }
 
 private fun LiquidGlassView.configureThirdPartyGlass(
