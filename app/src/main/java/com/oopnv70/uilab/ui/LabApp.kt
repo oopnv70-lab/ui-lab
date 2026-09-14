@@ -317,7 +317,13 @@ fun LabApp(
             FloatingPillNavigationBar(
                 items = remember { buildNavItems() },
                 selectedIndex = selectedIndex,
-                onSelect = { selectedIndex = it }
+                onSelect = { selectedIndex = it },
+                // 玻璃模式下，胶囊导航栏本身由真·液态玻璃承托。
+                //
+                // 符合 Apple 的液态玻璃规范：玻璃只用于「导航与控件」
+                //（工具栏 / Tab Bar / 浮动按钮），不覆盖内容区。
+                // 胶囊导航栏属于导航控件 → 该玻璃化；下面的天气内容卡片则不该。
+                liquidGlass = appSettings.themeStyle == ThemeStyle.LIQUID_GLASS
             )
         }
         // ---------- 顶部：灵动岛胶囊（最后画 → 层级最高） ----------

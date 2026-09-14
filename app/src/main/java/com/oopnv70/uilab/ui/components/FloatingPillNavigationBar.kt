@@ -1,5 +1,6 @@
 package com.oopnv70.uilab.ui.components
 
+import android.os.Build
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
@@ -31,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
@@ -38,6 +40,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.oopnv70.uilab.glass.GlassDefaults
+import com.oopnv70.uilab.glass.LiquidGlassSurface
 
 // =====================================================================
 // 尺寸常量（集中管理，方便整体调节紧凑度）
@@ -61,78 +65,124 @@ private val IndicatorVerticalInset: Dp = 5.dp
  *    而不是在新位置直接出现（[animateDpAsState] 驱动 `offset`）
  *  - **图标 + 文字**：文字随选中状态渐变出现，兼顾紧凑与可读
  *  - 使用 M3 主题色
+ *  - **液态玻璃**：[liquidGlass] 为 true 且系统支持时，胶囊本身改由
+ *    [LiquidGlassSurface] 承托（真·折射），不再画实心底
+ *
+ * ⚠️ 关于玻璃模式的层级（这里很容易搞错）：
+ *    玻璃必须能"看见"它身后的天气页内容，所以**胶囊自己的实心底必须消失**。
+ *    绘制顺序是：玻璃层（贴在最底）→ 滑块 → 图标/文字。
+ *    如果保留 Surface 的实心 color，玻璃抓住的就是那层纯色，等于白做。
  *
  * @param items 导航项目列表。
  * @param selectedIndex 当前选中项下标。
  * @param onSelect 选中回调。
  * @param modifier 外部修饰符（一般用来控制外边距与位置）。
+ * @param liquidGlass 是否启用真·液态玻璃胶囊。
  */
 @Composable
 fun FloatingPillNavigationBar(
     items: List<NavItem>,
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    liquidGlass: Boolean = false
 ) {
     // 滑块滑动的动画时长。稍长一点，滑动更有「惯性感」。
     val slideDuration = 380
+
+    // 玻璃只在 API 31+ 可用（RuntimeShader 门槛），否则自动退回实心。
+    val useGlass = liquidGlass && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+
+    val pillShape = RoundedCornerShape(BarHeight / 2)   // 完全胶囊
 
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .height(BarHeight),
-        shape = RoundedCornerShape(BarHeight / 2),   // 完全胶囊
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        tonalElevation = 2.dp,
-        shadowElevation = 6.dp
+        shape = pillShape,
+        // 玻璃模式下不填色：让身后的内容透出来给 GlassView 抓。
+        // 用 Transparent 而不是删掉 color —— Surface 需要它来决定内容色域。
+        color = if (useGlass) Color.Transparent
+        else MaterialTheme.colorScheme.surfaceContainerHigh,
+        tonalElevation = if (useGlass) 0.dp else 2.dp,
+        shadowElevation = if (useGlass) 0.dp else 6.dp
     ) {
-        BoxWithConstraints(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight()                          // 撑满胶囊高度，保证滑块垂直居中
-                .padding(horizontal = BarInnerPadding)
+                .fillMaxHeight()
         ) {
-            val itemCount = items.size.coerceAtLeast(1)
-            // 每个 item 的宽度（等分）
-            val itemWidth: Dp = maxWidth / itemCount
-            // 滑块宽度：略小于 item 宽度，形成「胶囊块」而不是整格
-            val indicatorWidth: Dp = itemWidth - IndicatorInset * 2
+            // ---------- 最底层：液态玻璃 ----------
+            // 声明在最前 → 画在最下，图标与滑块都浮在它上面。
+            if (useGlass) {
+                LiquidGlassSurface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .fillMaxHeight(),
+                    cornerRadiusDp = 999f,             // 胶囊
+                    refract = GlassDefaults.REFRACT,
+                    curve = GlassDefaults.CURVE,
+                    chroma = GlassDefaults.CHROMA,
+                    tint = GlassDefaults.TINT,
+                    backdropBlur = 0f
+                )
+            }
 
-            // ---------- 滑块的水平位置（核心：这里产生「滑动」效果） ----------
-            val targetOffset: Dp = itemWidth * selectedIndex + IndicatorInset
-            val indicatorOffset by animateDpAsState(
-                targetValue = targetOffset,
-                animationSpec = tween(
-                    durationMillis = slideDuration,
-                    easing = FastOutSlowInEasing
-                ),
-                label = "pillIndicatorOffset"
-            )
-
-            // ---------- 滑块背景（独立一层，位于图标之下） ----------
-            Box(
+            BoxWithConstraints(
                 modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .offset(x = indicatorOffset)
-                    .width(indicatorWidth)
-                    .fillMaxHeight()
-                    .padding(vertical = IndicatorVerticalInset)
-                    .clip(RoundedCornerShape(50))              // 完全胶囊
-                    .background(MaterialTheme.colorScheme.secondaryContainer)
-            )
-
-            // ---------- 图标 + 文字层 ----------
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+                    .fillMaxWidth()
+                    .fillMaxHeight()                          // 撑满胶囊高度，保证滑块垂直居中
+                    .padding(horizontal = BarInnerPadding)
             ) {
-                items.forEachIndexed { index, item ->
-                    PillNavItem(
-                        item = item,
-                        selected = index == selectedIndex,
-                        onClick = { onSelect(index) },
-                        modifier = Modifier.width(itemWidth)
-                    )
+                val itemCount = items.size.coerceAtLeast(1)
+                // 每个 item 的宽度（等分）
+                val itemWidth: Dp = maxWidth / itemCount
+                // 滑块宽度：略小于 item 宽度，形成「胶囊块」而不是整格
+                val indicatorWidth: Dp = itemWidth - IndicatorInset * 2
+
+                // ---------- 滑块的水平位置（核心：这里产生「滑动」效果） ----------
+                val targetOffset: Dp = itemWidth * selectedIndex + IndicatorInset
+                val indicatorOffset by animateDpAsState(
+                    targetValue = targetOffset,
+                    animationSpec = tween(
+                        durationMillis = slideDuration,
+                        easing = FastOutSlowInEasing
+                    ),
+                    label = "pillIndicatorOffset"
+                )
+
+                // ---------- 滑块背景（独立一层，位于图标之下） ----------
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .offset(x = indicatorOffset)
+                        .width(indicatorWidth)
+                        .fillMaxHeight()
+                        .padding(vertical = IndicatorVerticalInset)
+                        .clip(RoundedCornerShape(50))              // 完全胶囊
+                        .background(
+                            // 玻璃模式下选中块也要半透明，否则会挡住折射
+                            if (useGlass) {
+                                MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f)
+                            } else {
+                                MaterialTheme.colorScheme.secondaryContainer
+                            }
+                        )
+                )
+
+                // ---------- 图标 + 文字层 ----------
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    items.forEachIndexed { index, item ->
+                        PillNavItem(
+                            item = item,
+                            selected = index == selectedIndex,
+                            onClick = { onSelect(index) },
+                            modifier = Modifier.width(itemWidth)
+                        )
+                    }
                 }
             }
         }
