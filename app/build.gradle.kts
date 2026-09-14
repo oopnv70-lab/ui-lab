@@ -107,5 +107,9 @@ dependencies {
     // 本地存储
     implementation(libs.androidx.datastore.preferences)
 
+    // Third-party liquid glass implementation (MIT):
+    // https://github.com/QWEA0/Liquid-Glass-Android
+    implementation("com.github.QWEA0:liquidglass:v2.0.10")
+
     debugImplementation(libs.androidx.ui.tooling)
 }

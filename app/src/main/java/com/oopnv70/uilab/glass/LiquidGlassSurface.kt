@@ -1,7 +1,6 @@
 package com.oopnv70.uilab.glass
 
 import android.os.Build
-import android.view.View
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -10,34 +9,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.viewinterop.AndroidView
+import com.example.liquidglass.LiquidGlassView
 
-// =====================================================================
-// 真·液态玻璃 · 第四步：Compose 桥接
-// =====================================================================
-// 把 GlassView 包成 Compose 可用的组件。
-//
-// 用法：
-//   Box {
-//       content()               // ① 先画背景内容
-//       LiquidGlassSurface(...) { /* ② 玻璃层里的内容（图标等） */ }
-//   }
-//
-// ⚠️ 顺序很重要：玻璃必须在内容**之后**绘制，才能抓得到背景。
-//    在 Compose 里，"之后声明" = "画在上面"，正好符合 Box 的规则。
-// =====================================================================
-
-/**
- * 液态玻璃表面。
- *
- * @param modifier 尺寸/位置（就是玻璃元素的形状范围）
- * @param cornerRadiusDp 圆角半径。给一个大于高/2 的值即得到胶囊/圆形。
- * @param refract 折射强度（像素）
- * @param tint 本体检色量
- * @param tintColor 本体色
- * @param backdropBlur 背景模糊半径（很轻，3~6）
- * @param content 画在玻璃**内部**的东西（图标、文字）。注意：
- *                这些内容不参与折射，是浮在玻璃上的。
- */
+/** Compose adapter for the MIT-licensed QWEA0 Liquid-Glass-Android library. */
 @RequiresApi(Build.VERSION_CODES.S)
 @Composable
 fun LiquidGlassSurface(
@@ -55,49 +29,52 @@ fun LiquidGlassSurface(
     content: @Composable BoxScope.() -> Unit = {}
 ) {
     Box(modifier = modifier) {
-        // 玻璃层：一个透明的 AndroidView，只负责在它自己那块区域内画折射。
-        //
-        // 它是「绘制层」，不响应触摸 —— 事件交给上面的 content 或外层的
-        // clickable 处理，避免玻璃把点击吃掉。
         AndroidView(
             modifier = Modifier.fillMaxSize(),
-            factory = { ctx ->
-                GlassView(ctx).apply {
-                    this.refract = refract
-                    this.curve = curve
-                    this.chroma = chroma
-                    this.specular = specular
-                    this.specularSharp = specularSharp
-                    this.fresnel = fresnel
-                    this.tint = tint
-                    this.tintColor = floatArrayOf(
-                        tintColor.red, tintColor.green, tintColor.blue
+            factory = { context ->
+                LiquidGlassView(context).apply {
+                    configureThirdPartyGlass(
+                        cornerRadiusDp, refract, chroma, specular,
+                        tint, tintColor, backdropBlur
                     )
-                    this.backdropBlur = backdropBlur
-                    this.setCornerRadiusDp(cornerRadiusDp)
-                    // 玻璃自己不消费触摸，让点按穿透到下面的可点击区域
                     isClickable = false
                     isFocusable = false
                 }
             },
-            // 参数变化时同步到已存在的 GlassView（AndroidView 复用时必须）
             update = { view ->
-                view.refract = refract
-                view.curve = curve
-                view.chroma = chroma
-                view.specular = specular
-                view.specularSharp = specularSharp
-                view.fresnel = fresnel
-                view.tint = tint
-                view.tintColor = floatArrayOf(
-                    tintColor.red, tintColor.green, tintColor.blue
+                view.configureThirdPartyGlass(
+                    cornerRadiusDp, refract, chroma, specular,
+                    tint, tintColor, backdropBlur
                 )
-                view.backdropBlur = backdropBlur
-                view.setCornerRadiusDp(cornerRadiusDp)
             }
         )
-
-        // 玻璃之上的内容
         content()
     }
+}
+
+private fun LiquidGlassView.configureThirdPartyGlass(
+    cornerRadiusDp: Float,
+    refract: Float,
+    chroma: Float,
+    specular: Float,
+    tint: Float,
+    tintColor: Color,
+    backdropBlur: Float
+) {
+    cornerRadius = cornerRadiusDp
+    refractionHeight = refract
+    blurAmount = (backdropBlur / 64f).coerceIn(0.01f, 1f)
+    aberrationIntensity = (chroma * 20f).coerceIn(0f, 8f)
+    enableBackdropBlur = true
+    enableChromaticAberration = chroma > 0.001f
+    enableEdgeHighlight = specular > 0.001f
+    enableDynamicBackground = true
+    setGlassTint(
+        android.graphics.Color.rgb(
+            (tintColor.red * 255f).toInt(),
+            (tintColor.green * 255f).toInt(),
+            (tintColor.blue * 255f).toInt()
+        ),
+        tint.coerceIn(0f, 1f)
+    )
 }
