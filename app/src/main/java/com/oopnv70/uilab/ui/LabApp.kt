@@ -3,7 +3,9 @@ package com.oopnv70.uilab.ui
 import android.annotation.SuppressLint
 import android.os.Build
 import androidx.compose.animation.AnimatedContent
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -123,6 +125,12 @@ fun LabApp(
     var islandExpanded by remember { mutableStateOf(false) }
     // 设置页是否打开（同样是临时 UI 状态，不需要跨进程保存）
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
+
+    // 设置是覆盖层；系统返回键优先关闭它，不能直接结束 Activity。
+    BackHandler(enabled = settingsOpen) {
+        settingsOpen = false
+    }
+
     val groups = WeatherGroup.entries
 
     // ---- 订阅 ViewModel 的真实数据 ----
