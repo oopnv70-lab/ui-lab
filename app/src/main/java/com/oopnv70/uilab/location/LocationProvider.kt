@@ -12,6 +12,8 @@ import android.os.Build
 import android.os.CancellationSignal
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.oopnv70.uilab.data.PhotonReverseGeocoder
+import com.oopnv70.uilab.data.ReversePlace
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -197,6 +199,12 @@ suspend fun locateCurrentPlace(
     onStage(LocateStage.REVERSE_GEOCODING)
     val address = reverseGeocode(appContext, location.latitude, location.longitude)
 
+    // ---------- 3.5 增强：Photon 补全街道级地名 ----------
+    // 系统 Geocoder 国内常只给到「市」，拿不到区/街道。这里再问一次 Photon
+    // （免 Key 的 OSM 服务，实测能返回街道甚至门牌），用它的结果**补上**
+    // 系统 Geocoder 缺的那几级。Photon 失败或拿不到更多时，完全不影响现有结果。
+    val photon = photonReverse(appContext, location.latitude, location.longitude)
+
     onStage(LocateStage.DONE)
     return LocatedPlace(
         latitude = location.latitude,
@@ -208,13 +216,32 @@ suspend fun locateCurrentPlace(
         //   · thoroughfare  = 街道 / 道路（「洞山街道」）
         //   · featureName   = 门牌 / 地点名，多数返回为空
         // 每个字段都先 trim + 去空串，避免拿到 "" 让 UI 显示成空白。
-        province = address?.adminArea.clean(),
-        city = (address?.locality ?: address?.subAdminArea).clean(),
-        district = address?.subLocality.clean(),
-        street = address?.thoroughfare.clean(),
-        feature = address?.featureName.clean(),
+        //
+        // 增强策略：系统 Geocoder 拿不到的级，用 Photon 补；两者都有时以系统为准
+        //（系统结果来自设备本地，对用户更可信），Photon 只在系统空缺时兜底。
+        province = (address?.adminArea.clean() ?: photon?.province.clean()),
+        city = ((address?.locality ?: address?.subAdminArea).clean() ?: photon?.city.clean()),
+        district = (address?.subLocality.clean() ?: photon?.district.clean()),
+        street = (address?.thoroughfare.clean() ?: photon?.street.clean()),
+        feature = (address?.featureName.clean() ?: photon?.feature.clean()),
         provider = location.provider ?: "unknown"
     )
+}
+
+/**
+ * 用 Photon 反解一次坐标，作为系统 Geocoder 的增强层。
+ *
+ * 失败 / 拿不到更多信息时返回 null，上层静默忽略 —— 绝不影响现有定位结果。
+ */
+private suspend fun photonReverse(
+    context: Context,
+    latitude: Double,
+    longitude: Double
+): ReversePlace? = try {
+    PhotonReverseGeocoder.reverse(latitude, longitude)
+} catch (t: Throwable) {
+    Log.w(TAG, "Photon 增强反解异常: ${t.message}")
+    null
 }
 
 /** 把可能为 null / 空白 / 仅空格的字符串规整成 null，避免 UI 显示空。 */

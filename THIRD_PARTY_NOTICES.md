@@ -1,5 +1,20 @@
 # Third-party notices
 
+## Photon (Komoot)
+
+ui-lab uses Photon for reverse geocoding (coordinates → place name):
+
+- Project: Photon
+- Repository: https://github.com/komoot/photon
+- Endpoint used: https://photon.komoot.io/reverse
+- License: Apache License 2.0 (server); data © OpenStreetMap contributors
+  under the Open Database License (ODbL)
+
+Photon powers the "locate to street level" enhancement: when the system
+geocoder only resolves a location to city level, ui-lab queries Photon to
+fill in district / street / feature detail. Failures degrade silently to the
+system geocoder result.
+
 ## Liquid-Glass-Android
 
 ui-lab uses the following open-source liquid-glass implementation:
