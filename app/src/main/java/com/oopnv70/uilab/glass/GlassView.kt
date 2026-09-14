@@ -57,7 +57,7 @@ import androidx.annotation.RequiresApi
 // =====================================================================
 
 /** 诊断开关：排查玻璃渲染问题时临时打开，交付前改回 false。 */
-private const val DEBUG_GLASS = false
+private const val DEBUG_GLASS = true
 
 private const val TAG = "GlassView"
 
@@ -118,11 +118,11 @@ class GlassView @JvmOverloads constructor(
     private var loggedFirstDraw = false
 
     // =================================================================
-    // 尺寸变化 → 重建 SDF
+    // 尺寸变化
     // =================================================================
     init {
         // ⚠️ 保留：强制本 View 拥有自己的硬件层。
-        //   虽然现在背景录制不再依赖它（录制用的是 RenderNode 的硬件画布），
+        //   虽然背景录制不再依赖它（录制用的是 RenderNode 的硬件画布），
         //   但它仍然保证 onDraw 拿到的 canvas 是硬件加速的，
         //   让 RuntimeShader 的绘制路径保持可用。
         setLayerType(LAYER_TYPE_HARDWARE, null)
@@ -133,6 +133,107 @@ class GlassView @JvmOverloads constructor(
         if (w <= 0 || h <= 0) return
 
         loggedFirstDraw = false
+        backdropRecorded = false
+    }
+
+    // =================================================================
+    // 背景录制：必须在 onPreDraw，不能放在 onDraw
+    // =================================================================
+    //
+    // ═══════════════════════════════════════════════════════════════
+    // ⚠️⚠️ 这是本轮"玻璃变黑"的根因，务必记住 ⚠️⚠️
+    //
+    //   上一版把背景录制放在 onDraw 里。表面上没问题，实际上：
+    //   onDraw 执行的时刻，整棵树**正在绘制中**，背景层的内容还在
+    //   往各自的 RenderNode 里录。此时用 View.draw() 去"重放"背景，
+    //   拿到的是一帧**没画完**的内容 —— Compose 的 AndroidComposeView
+    //   尤其如此，它的内容由 Compose 自己的绘制管线控制，从 View.draw()
+    //   重入常常得到空白。
+    //
+    //   空白背景 → shader 采样全 0 → 输出纯黑。
+    //   所以现象是"黑了"，而不是"闪退"或"白板"。
+    //
+    //   ✅ 正确时机：ViewTreeObserver.OnPreDrawListener。
+    //      它在"这一帧的绘制开始之前"回调 —— 此时上一帧的背景层
+    //      已经完整画好，重放它就能拿到真实内容。
+    //
+    //   这也是官方参考实现的共识做法（react-native-liquid-glassmorphism
+    //   的 Android 文档明确写：backdrop capture 发生在 onPreDraw）。
+    // ═══════════════════════════════════════════════════════════════
+
+    /** 本次尺寸下背景是否已经录好。 */
+    private var backdropRecorded = false
+
+    private val preDrawListener = android.view.ViewTreeObserver.OnPreDrawListener {
+        // 在绘制前录制背景。录制本身不动 UI 状态（只短暂改可见性），
+        // 所以这里返回 true 让正常的绘制流程继续。
+        recordBackdropIfNeeded()
+        true
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        viewTreeObserver.addOnPreDrawListener(preDrawListener)
+    }
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        // ⚠️ 必须移除，否则监听器会一直持有 this，且 detach 后仍在跑
+        if (viewTreeObserver.isAlive) {
+            viewTreeObserver.removeOnPreDrawListener(preDrawListener)
+        }
+        backdropNode.discardDisplayList()
+        backdropRecorded = false
+    }
+
+    /**
+     * 把背景来源录进 [backdropNode]。
+     *
+     * 只在 onPreDraw 里调用 —— 见上面那段警示。
+     */
+    private fun recordBackdropIfNeeded() {
+        if (width <= 0 || height <= 0) return
+
+        val source = effectiveBackdropSource() ?: return
+
+        // 记录玻璃相对背景来源的偏移：录制画布的原点要对齐到背景来源的
+        // 左上角，这样 shader 里的 uv 才能和背景内容一一对应。
+        getLocationOnScreen(locationOnScreen)
+        source.getLocationOnScreen(sourceLocationOnScreen)
+        val offsetX = (locationOnScreen[0] - sourceLocationOnScreen[0]).toFloat()
+        val offsetY = (locationOnScreen[1] - sourceLocationOnScreen[1]).toFloat()
+
+        // 录制区向外扩一圈 margin：让模糊和折射在边缘处也能采到真实内容，
+        // 而不是读到节点外的透明黑（那会在边缘拖出一圈发灰的脏边）。
+        val margin = computeMargin()
+        val recW = width + 2 * margin
+        val recH = height + 2 * margin
+
+        // 节点定位：让节点坐标系里的 (margin, margin) 正好落在玻璃左上角。
+        backdropNode.setPosition(-margin, -margin, width + margin, height + margin)
+
+        try {
+            val recordingCanvas = backdropNode.beginRecording(recW, recH)
+            try {
+                // 对齐到背景来源原点，再把玻璃自己的位置偏出来
+                recordingCanvas.translate(margin - offsetX, margin - offsetY)
+                backdropCapture.draw(recordingCanvas, source, this)
+            } finally {
+                backdropNode.endRecording()
+            }
+            backdropRecorded = true
+        } catch (t: Throwable) {
+            // 录制失败不该杀进程：标记未录制，onDraw 里会走兜底。
+            // 真机上出过 IllegalStateException（录制重入），必须兜住。
+            backdropRecorded = false
+            if (DEBUG_GLASS) Log.w(TAG, "backdrop record failed", t)
+        }
+    }
+
+    /** 录制区外扩边距：覆盖模糊的采样范围，最少 32px（16 对齐更省）。 */
+    private fun computeMargin(): Int {
+        val need = (backdropBlur * 3f + 16f).toInt()
+        return ((need + 15) / 16 * 16).coerceAtLeast(32)
     }
 
     /**
@@ -237,12 +338,12 @@ class GlassView @JvmOverloads constructor(
             Log.i(
                 TAG,
                 "onDraw: w=$width h=$height hw=true " +
-                    "source=${source?.javaClass?.simpleName}"
+                    "source=${source?.javaClass?.simpleName} recorded=$backdropRecorded"
             )
         }
 
-        // 背景来源拿不到 → 磨砂兜底。
-        if (source == null) {
+        // 背景来源拿不到、或背景还没录好 → 磨砂兜底。
+        if (source == null || !backdropRecorded) {
             drawFallback(canvas)
             return
         }
@@ -258,42 +359,22 @@ class GlassView @JvmOverloads constructor(
     }
 
     /**
-     * 真正的液态玻璃绘制。
+     * 输出已经录好的玻璃。
      *
-     * ① 把背景来源录进 [backdropNode]（硬件画布，剔除玻璃自身）
-     * ② 把 uniform 全部写进 shader
-     * ③ 在 [backdropNode] 上挂「模糊 → 折射」的 RenderEffect 链
-     * ④ 输出节点
+     * ⚠️ 这里**不再录制背景** —— 背景由 onPreDraw 里的
+     * [recordBackdropIfNeeded] 提前录好（见那段警示）。
+     * 本方法只负责：写 uniform → 挂效果链 → 画节点。
+     *
+     * ① 把 uniform 全部写进 shader
+     * ② 在 [backdropNode] 上挂「模糊 → 折射」的 RenderEffect 链
+     * ③ 输出节点
      */
     private fun drawGlass(canvas: Canvas, source: View) {
-        // ---- ① 录制背景 ----
-        // 记录玻璃相对背景来源的偏移：录制画布的原点要对齐到背景来源的
-        // 左上角，这样 shader 里的 uv 才能和背景内容一一对应。
-        getLocationOnScreen(locationOnScreen)
-        source.getLocationOnScreen(sourceLocationOnScreen)
-        val offsetX = (locationOnScreen[0] - sourceLocationOnScreen[0]).toFloat()
-        val offsetY = (locationOnScreen[1] - sourceLocationOnScreen[1]).toFloat()
+        val margin = computeMargin()
 
-        // 录制区向外扩一圈 margin：让模糊和折射在边缘处也能采到真实内容，
-        // 而不是读到节点外的透明黑（那会在边缘拖出一圈发灰的脏边）。
-        val margin = (backdropBlur * 3f + 16f).toInt().coerceAtLeast(32)
-        val recW = width + 2 * margin
-        val recH = height + 2 * margin
-
-        // 节点定位：让节点坐标系里的 (margin, margin) 正好落在玻璃左上角，
-        // 也就是说节点相对玻璃左上角整体外扩 margin。
-        backdropNode.setPosition(-margin, -margin, width + margin, height + margin)
-
-        val recordingCanvas = backdropNode.beginRecording(recW, recH)
-        try {
-            // 对齐到背景来源原点，再把玻璃自己的位置偏出来
-            recordingCanvas.translate(margin - offsetX, margin - offsetY)
-            backdropCapture.draw(recordingCanvas, source, this)
-        } finally {
-            backdropNode.endRecording()
-        }
-
-        // ---- ② 写 uniform ----
+        // ---- ① 写 uniform ----
+        // 注意：这里不碰 backdropNode 的录制内容 —— 它已经在
+        // onPreDraw 里录好了。setRenderEffect 只挂效果，不影响录制。
         shader.setFloatUniform("uSize", width.toFloat(), height.toFloat())
         shader.setFloatUniform("uMargin", margin.toFloat())
         shader.setFloatUniform(
@@ -363,13 +444,9 @@ class GlassView @JvmOverloads constructor(
     private val locationOnScreen = IntArray(2)
     private val sourceLocationOnScreen = IntArray(2)
 
-    /** 通知玻璃：背景变了，需要重绘。 */
+    /** 通知玻璃：背景变了，需要重录 + 重绘。 */
     fun markBackdropDirty() {
+        backdropRecorded = false
         invalidate()
-    }
-
-    override fun onDetachedFromWindow() {
-        super.onDetachedFromWindow()
-        backdropNode.discardDisplayList()
     }
 }
