@@ -25,13 +25,20 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      # 说明：runner 自带 Android SDK（含 cmdline-tools），无需 setup-android。
+      # 之前的 android-actions/setup-android@v3 会校验预装 sdkmanager 版本，
+      # 版本对不上就报 "Wrong version in preinstalled sdkmanager" 并让
+      # sdkmanager --licenses 卡在交互提示上，导致 6/7 许可未接受而失败。
+      # 这里直接用 runner 自带的 sdkmanager，跳过那套版本校验。
       - name: Accept licenses
-        run: yes | sdkmanager --licenses > /dev/null 2>&1 || true
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || \
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
       - name: Install Android 17 platform (API 37)
         run: |
+          SDKMAN=$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")
           # Android 17 的平台包名是 platforms;android-37.0（次要版本命名）
+          "$SDKMAN" --install "platforms;android-37.0" "platform-tools" "build-tools;36.0.0" || \
           sdkmanager --install "platforms;android-37.0" "platform-tools" "build-tools;36.0.0"
           echo "--- installed platforms ---"
           ls "$ANDROID_HOME/platforms"
