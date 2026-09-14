@@ -291,6 +291,22 @@ class GlassView @JvmOverloads constructor(
         return parent as? View
     }
 
+    /** 诊断：把整条父链的类名打出来，用来确认背景源解析找对没有。 */
+    private fun dumpParentChain(): String {
+        val sb = StringBuilder()
+        var v: View? = this
+        var d = 0
+        while (v != null && d < 12) {
+            sb.append("\n  [").append(d).append("] ")
+                .append(v.javaClass.name)
+                .append(" ").append(v.width).append("x").append(v.height)
+            if (v is ViewGroup) sb.append(" children=").append(v.childCount)
+            v = v.parent as? View
+            d++
+        }
+        return sb.toString()
+    }
+
     /**
      * 判断 [container] 是否"承载了除本玻璃之外的可见内容"。
      *
@@ -338,7 +354,8 @@ class GlassView @JvmOverloads constructor(
             Log.i(
                 TAG,
                 "onDraw: w=$width h=$height hw=true " +
-                    "source=${source?.javaClass?.simpleName} recorded=$backdropRecorded"
+                    "source=${source?.javaClass?.simpleName} recorded=$backdropRecorded" +
+                    " chain=" + dumpParentChain()
             )
         }
 
