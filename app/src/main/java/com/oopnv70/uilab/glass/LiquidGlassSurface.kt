@@ -78,6 +78,21 @@ fun LiquidGlassSurface(
                     isClickable = false
                     isFocusable = false
                 }
+            },
+            // 参数变化时同步到已存在的 GlassView（AndroidView 复用时必须）
+            update = { view ->
+                view.refract = refract
+                view.curve = curve
+                view.chroma = chroma
+                view.specular = specular
+                view.specularSharp = specularSharp
+                view.fresnel = fresnel
+                view.tint = tint
+                view.tintColor = floatArrayOf(
+                    tintColor.red, tintColor.green, tintColor.blue
+                )
+                view.backdropBlur = backdropBlur
+                view.setCornerRadiusDp(cornerRadiusDp)
             }
         )
 

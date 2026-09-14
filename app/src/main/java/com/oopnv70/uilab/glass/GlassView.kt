@@ -102,6 +102,9 @@ class GlassView @JvmOverloads constructor(
         backdrop?.recycle()
         backdrop = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
 
+        // 尺寸变了，原来抓的背景已经对不上位置了，必须重抓
+        backdropDirty = true
+
         rebuildSdf(w, h)
     }
 
@@ -144,54 +147,25 @@ class GlassView @JvmOverloads constructor(
     // =================================================================
     // 核心：抓背景 + 画玻璃
     // =================================================================
-    override fun dispatchDraw(canvas: Canvas) {
+    //
+    // ⚠️ 这里用 onDraw 而不是 dispatchDraw。
+    //
+    // 为什么：dispatchDraw 是"画子 View"的钩子，在它里面调
+    //   parent.draw(offscreenCanvas) 会让整棵树（含 Compose 的
+    //   AndroidComposeView）重新绘制一遍，拿到的是未完成的缓冲 →
+    //   之前实机上看到的就是"一片黑"。
+    //
+    // onDraw 的时机是"本 View 正在被绘制"，此时共享缓冲里已经有
+    //   它身后画完的内容。我们从**根 View** 抓一次整屏位图，
+    //   再按自己在屏幕上的位置裁出那一块当作 backdrop。
+    override fun onDraw(canvas: Canvas) {
         if (width <= 0 || height <= 0) return
 
-        val off = offscreen ?: return
-        val offCanvas = offscreenCanvas ?: return
         val bd = backdrop ?: return
         val sdf = sdfBitmap ?: return
 
         // ---- ① 抓背景 ----
-        // 关键技巧：让**父容器**重画一遍，但把「本 View」临时设为不可见，
-        // 这样 offscreen 里就是「没有玻璃的纯背景」。
-        //
-        // ⚠️ 不能直接在 canvas 上 draw，因为 canvas 已经包含了本 View 之前
-        //    绘制的内容，直接画会把自己叠进去。
-        //    用 parent.draw(offscreenCanvas) 才能拿到完整的背景层。
-        val parent = parent as? View
-        if (parent != null) {
-            offCanvas.drawColor(0, PorterDuff.Mode.CLEAR)
-
-            val wasVisible = visibility
-            // 把自己藏起来，避免抓背景时把玻璃自身抓进去（会自我引用/拖影）
-            visibility = INVISIBLE
-            try {
-                // 把父容器的绘制原点挪到「本 View 相对父容器」的位置，
-                // 这样 offscreen 里的内容正好对齐本 View 的坐标系。
-                offCanvas.save()
-                offCanvas.translate(-left.toFloat(), -top.toFloat())
-                parent.draw(offCanvas)
-                offCanvas.restore()
-            } finally {
-                visibility = wasVisible
-            }
-
-            // offscreen → backdrop
-            //
-            // ⚠️ 这里**不做** Paint 级模糊。
-            //    原因：Paint.setRenderEffect() 虽然名义上是 API 31+，但在
-            //    本项目的 AGP 9.x + compileSdk 37 组合下编译期报
-            //    "Unresolved reference 'setRenderEffect'"，无法通过。
-            //    而且液态玻璃的核心是「折射」，不是「模糊」——
-            //    模糊交给 shader 内部按需处理即可，反而更可控。
-            val bc = Canvas(bd)
-            bc.drawColor(0, PorterDuff.Mode.CLEAR)
-            val bmp = off.copy(Bitmap.Config.ARGB_8888, false)
-            val paint = Paint(Paint.FILTER_BITMAP_FLAG)
-            bc.drawBitmap(bmp, 0f, 0f, paint)
-            bmp.recycle()
-        }
+        captureBackdropIfNeeded(bd)
 
         // ---- ② 传 uniform ----
         shader.setFloatUniform("uSize", width.toFloat(), height.toFloat())
@@ -211,14 +185,123 @@ class GlassView @JvmOverloads constructor(
         shader.setInputShader("uSdf", BitmapShader(sdf, tile, tile))
 
         // ---- ③ 画玻璃 ----
-        // Shader 以「view 本地坐标」为基准：fragCoord 从 (0,0) 到 (w,h)。
-        // 而 dispatchDraw 拿到的 canvas 原点在父容器坐标系里，
-        // 所以要先平移到本 View 的位置，画完再还原。
+        // onDraw 的 canvas 已经以本 View 左上角为原点，
+        // 所以直接画 0..w / 0..h 即可，不需要 translate。
         glassPaint.shader = shader
-        val save = canvas.save()
-        canvas.translate(left.toFloat(), top.toFloat())
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), glassPaint)
-        canvas.restoreToCount(save)
+    }
+
+    /**
+     * 抓取「本 View 身后」的内容到 [backdrop]。
+     *
+     * 策略（按可靠性从高到低）：
+     *   1) 如果上层通过 [setBackdropSource] 提供了背景 Bitmap，直接用
+     *   2) 否则尝试从 root view 渲染一次（仅在需要重抓时）
+     *   3) 都不行 → 用当前主题的中性色填充，**绝不留下黑色**
+     *
+     * ⚠️ 第 3 条是关键：即使抓不到背景，玻璃也必须是"半透明的乳白"，
+     *    而不是"黑块"。宁可退化得平淡，也不能看起来像坏了。
+     */
+    private fun captureBackdropIfNeeded(target: Bitmap) {
+        if (!backdropDirty) return
+        backdropDirty = false
+
+        val bc = Canvas(target)
+        bc.drawColor(0, PorterDuff.Mode.CLEAR)
+
+        // ---- 路径 1：上层显式提供 ----
+        val src = backdropSource
+        if (src != null && !src.isRecycled) {
+            val p = Paint(Paint.FILTER_BITMAP_FLAG)
+            bc.drawBitmap(src, null, android.graphics.Rect(0, 0, width, height), p)
+            return
+        }
+
+        // ---- 路径 2：从根 View 渲染 ----
+        // 用 getLocationOnScreen 拿到自己在屏幕里的位置，
+        // 然后把 rootView 画到一张整屏 Bitmap 上，再裁自己那一块。
+        val root = rootView
+        if (root != null && root.width > 0 && root.height > 0) {
+            val full = try {
+                Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
+            } catch (t: Throwable) {
+                null
+            }
+            if (full != null) {
+                try {
+                    val fc = Canvas(full)
+                    // 抓背景时把自己藏起来，否则会把上一帧的玻璃叠进去
+                    val wasVisible = visibility
+                    visibility = INVISIBLE
+                    try {
+                        root.draw(fc)
+                    } finally {
+                        visibility = wasVisible
+                    }
+                    val loc = IntArray(2)
+                    getLocationOnScreen(loc)
+                    val left = loc[0].coerceIn(0, full.width)
+                    val top = loc[1].coerceIn(0, full.height)
+                    val right = (loc[0] + width).coerceIn(0, full.width)
+                    val bottom = (loc[1] + height).coerceIn(0, full.height)
+                    if (right > left && bottom > top) {
+                        val crop = Bitmap.createBitmap(full, left, top, right - left, bottom - top)
+                        val p = Paint(Paint.FILTER_BITMAP_FLAG)
+                        bc.drawBitmap(crop, null, android.graphics.Rect(0, 0, width, height), p)
+                        crop.recycle()
+                    }
+                } catch (t: Throwable) {
+                    // 渲染失败就退到路径 3，不抛
+                } finally {
+                    full.recycle()
+                }
+            }
+        }
+
+        // ---- 路径 3：兜底中性色（半透明乳白，绝不是黑） ----
+        // 判断"上面两条是否真的画进了东西"：采样中心像素的 alpha。
+        // 如果中心像素完全透明，说明什么都没抓到，用兜底色覆盖。
+        //
+        // ⚠️ getPixel 的坐标必须落在 bitmap 内：极窄/极扁的 View
+        //    （比如 1px 高的分隔线）会越界崩溃，这里做一次夹取。
+        val px = (width / 2).coerceIn(0, target.width - 1)
+        val py = (height / 2).coerceIn(0, target.height - 1)
+        if (px >= 0 && py >= 0) {
+            val probe = target.getPixel(px, py)
+            if (android.graphics.Color.alpha(probe) == 0) {
+                bc.drawColor(fallbackColor)
+            }
+        } else {
+            bc.drawColor(fallbackColor)
+        }
+    }
+
+    /** 兜底色：半透明乳白。抓不到背景时用它，视觉上是"雾面玻璃"。 */
+    private var fallbackColor: Int = 0x66E8EEF6.toInt()
+
+    private var backdropSource: Bitmap? = null
+    private var backdropDirty = true
+
+    /**
+     * 由上层提供一个「背景快照」。
+     *
+     * 这是最可靠的路径 —— 调用方（Compose 侧）知道背景长什么样，
+     * 直接交给玻璃即可，玻璃不用自己去"回看"。
+     *
+     * ⚠️ 生命周期：这块 Bitmap **归调用方所有**，GlassView 只读不回收。
+     *    调用方想换背景就直接再调一次；不再需要时把它设为 null 即可。
+     */
+    fun setBackdropSource(bitmap: Bitmap?) {
+        if (backdropSource === bitmap) return
+        backdropSource = bitmap
+        backdropDirty = true
+        invalidate()
+    }
+
+    /** 通知玻璃：背景变了，需要重抓。 */
+    fun markBackdropDirty() {
+        backdropDirty = true
+        invalidate()
     }
 
     override fun onDetachedFromWindow() {
