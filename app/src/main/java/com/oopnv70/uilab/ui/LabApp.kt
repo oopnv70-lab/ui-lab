@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.oopnv70.uilab.glass.GlassDefaults
+import com.oopnv70.uilab.glass.GlassFeature
 import com.oopnv70.uilab.glass.LiquidGlassSurface
 import com.oopnv70.uilab.location.LocateUiState
 import com.oopnv70.uilab.location.LocationPermissionState
@@ -331,7 +332,7 @@ fun LabApp(
                 // 符合 Apple 的液态玻璃规范：玻璃只用于「导航与控件」
                 //（工具栏 / Tab Bar / 浮动按钮），不覆盖内容区。
                 // 胶囊导航栏属于导航控件 → 该玻璃化；下面的天气内容卡片则不该。
-                liquidGlass = appSettings.themeStyle == ThemeStyle.LIQUID_GLASS
+                liquidGlass = GlassFeature.enabled && appSettings.themeStyle == ThemeStyle.LIQUID_GLASS
             )
         }
         // ---------- 顶部：灵动岛胶囊（最后画 → 层级最高） ----------
@@ -377,7 +378,8 @@ fun LabApp(
             // ⚠️ 结构上必须让玻璃**后画**（在 Box 里后声明 = 画在上层），
             //    因为 GlassView 要抓的是"它身后"的内容 —— 也就是下面的天气页。
             //    所以这里不是"给按钮加个背景"，而是"在按钮位置叠一层玻璃"。
-            val glassMode = appSettings.themeStyle == ThemeStyle.LIQUID_GLASS
+            val glassMode = GlassFeature.enabled &&
+                appSettings.themeStyle == ThemeStyle.LIQUID_GLASS
 
             Box(
                 modifier = Modifier
