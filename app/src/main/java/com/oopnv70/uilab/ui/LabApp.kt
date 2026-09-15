@@ -40,6 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -48,6 +49,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import com.oopnv70.uilab.glass.GlassDefaults
 import com.oopnv70.uilab.glass.GlassFeature
 import com.oopnv70.uilab.glass.LiquidGlassSurface
@@ -122,6 +126,11 @@ fun LabApp(
     weatherViewModel: WeatherViewModel = viewModel()
 ) {
     var selectedIndex by rememberSaveable { mutableIntStateOf(0) }
+    // 胶囊切换「经过中间页」用的协程作用域：切换时逐档扫过中间索引，
+    // 让 AnimatedContent 依次播放 0→1→2→3 的过渡，而非 0→3 直接跳变。
+    val navScope = rememberCoroutineScope()
+    // 当前正在执行的逐档扫描 Job；切换目标被连续点击时取消上一次，避免乱序。
+    var sweepJob by remember { mutableStateOf<Job?>(null) }
     // 灵动岛是否展开（不跨进程保存，属于「临时 UI 状态」）
     var islandExpanded by remember { mutableStateOf(false) }
     // 设置页是否打开（同样是临时 UI 状态，不需要跨进程保存）
@@ -326,7 +335,23 @@ fun LabApp(
             FloatingPillNavigationBar(
                 items = remember { buildNavItems() },
                 selectedIndex = selectedIndex,
-                onSelect = { selectedIndex = it },
+                onSelect = { target ->
+                    sweepJob?.cancel()
+                    sweepJob = navScope.launch {
+                        val from = selectedIndex
+                        if (target == from) return@launch
+                        val step = if (target > from) 1 else -1
+                        var i = from + step
+                        // 逐档扫过中间索引；每档停留极短，但每次赋值都会
+                        // 触发 AnimatedContent 重新渲染，读到的是「当时最新」的数据。
+                        while (i != target) {
+                            selectedIndex = i
+                            delay(SWEEP_STEP_MS)
+                            i += step
+                        }
+                        selectedIndex = target
+                    }
+                },
                 // 玻璃模式下，胶囊导航栏本身由真·液态玻璃承托。
                 //
                 // 符合 Apple 的液态玻璃规范：玻璃只用于「导航与控件」
@@ -459,6 +484,12 @@ fun LabApp(
  * （那个 import 在 false 分支下用不到，编译器会有未使用提示）。
  */
 private const val SHOW_DYNAMIC_ISLAND = false
+/**
+ * 胶囊切换「经过中间页」时，每档中间索引的停留时长（毫秒）。
+ * 取值要「极短、一闪而过」——太短（<30ms）人眼来不及察觉扫过，
+ * 太长（>120ms）则显得拖沓。70ms 是「电梯快速经过楼层」的体感。
+ */
+private const val SWEEP_STEP_MS = 70L
 
 /**
  * 展示在设置页「关于」里的版本号。
