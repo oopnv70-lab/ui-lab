@@ -7,12 +7,13 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 
 import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -49,8 +50,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.oopnv70.uilab.glass.GlassDefaults
 import com.oopnv70.uilab.glass.GlassFeature
@@ -126,10 +127,15 @@ fun LabApp(
     weatherViewModel: WeatherViewModel = viewModel()
 ) {
     var selectedIndex by rememberSaveable { mutableIntStateOf(0) }
-    // 胶囊切换「经过中间页」用的协程作用域：切换时逐档扫过中间索引，
-    // 让 AnimatedContent 依次播放 0→1→2→3 的过渡，而非 0→3 直接跳变。
+    // 连续「扫过」动画的驱动器：值在 from → target 之间连续过渡，
+    // 取整后得到「当前应显示的页」。与逐档 delay+赋值不同，这里是一次
+    // 连续动画，中间页会快速、连贯地掠过，而不是每层停一下（那正是卡顿源）。
+    val pageProgress = remember { Animatable(selectedIndex.toFloat()) }
+    // AnimatedContent 实际绑定的目标页：取 pageProgress 的整数部分。
+    val displayIndex = pageProgress.value.roundToInt()
+    // 胶囊切换用的协程作用域。
     val navScope = rememberCoroutineScope()
-    // 当前正在执行的逐档扫描 Job；切换目标被连续点击时取消上一次，避免乱序。
+    // 当前正在执行的扫过动画 Job；连续点击时取消上一次，避免乱序。
     var sweepJob by remember { mutableStateOf<Job?>(null) }
     // 灵动岛是否展开（不跨进程保存，属于「临时 UI 状态」）
     var islandExpanded by remember { mutableStateOf(false) }
@@ -246,34 +252,29 @@ fun LabApp(
         //   4. 关掉 SizeTransform：不同页面高度不同，默认的尺寸动画会把内容
         //      强行拉伸/裁剪，反而制造抖动。
         AnimatedContent(
-            targetState = selectedIndex,
+            targetState = displayIndex,
             transitionSpec = {
                 val forward = targetState > initialState
                 // 新页面入场方向：向右切 → 从右边进来；向左切 → 从左边进来
                 val enterFrom = if (forward) 1 else -1
                 // 旧页面退场方向：与入场相反
                 val exitTo = -enterFrom
-
+                // 关键：过渡要「轻且快」。跨多档扫过时，pageProgress 连续驱动
+                // displayIndex 快速经过中间值，若这里还挂 300ms 的完整 slide+scale，
+                // 每档动画都会没播完就被打断 → 正是「每层停一下」的卡顿源。
+                // 因此这里只用一次快速 slide + fade，去掉 scale，让中间页干净掠过。
                 val enter = slideInHorizontally(
-                    animationSpec = tween(300, easing = FastOutSlowInEasing),
-                    initialOffsetX = { full -> enterFrom * full / 6 }
+                    animationSpec = tween(140, easing = LinearEasing),
+                    initialOffsetX = { full -> enterFrom * full / 5 }
                 ) + fadeIn(
-                    animationSpec = tween(220, delayMillis = 60)
-                ) + scaleIn(
-                    animationSpec = tween(300, easing = FastOutSlowInEasing),
-                    initialScale = 0.97f
+                    animationSpec = tween(120)
                 )
-
                 val exit = slideOutHorizontally(
-                    animationSpec = tween(220, easing = FastOutLinearInEasing),
-                    targetOffsetX = { full -> exitTo * full / 8 }
+                    animationSpec = tween(120, easing = LinearEasing),
+                    targetOffsetX = { full -> exitTo * full / 5 }
                 ) + fadeOut(
-                    animationSpec = tween(140)
+                    animationSpec = tween(100)
                 )
-
-                // 注意：ContentTransform.sizeTransform 是只读的 val，
-                // 不能用 apply { sizeTransform = null } 赋值（会编译失败）。
-                // 官方文档明确支持：不需要尺寸动画时，在构造函数里传 sizeTransform = null。
                 ContentTransform(
                     targetContentEnter = enter,
                     initialContentExit = exit,
@@ -338,23 +339,26 @@ fun LabApp(
                 onSelect = { target ->
                     sweepJob?.cancel()
                     if (appSettings.sweepAnimation) {
+                        // 开关开启：让 pageProgress 从当前位置连续过渡到目标，
+                        // 期间 displayIndex（roundToInt）会快速、连贯地掠过中间页，
+                        // 而不是逐档停一下。总时长按跨档数缩放，跨越多档略久一点。
                         sweepJob = navScope.launch {
-                            val from = selectedIndex
-                            if (target == from) return@launch
-                            val step = if (target > from) 1 else -1
-                            var i = from + step
-                            // 逐档扫过中间索引；每档停留极短，但每次赋值都会
-                            // 触发 AnimatedContent 重新渲染，读到的是「当时最新」的数据。
-                            while (i != target) {
-                                selectedIndex = i
-                                delay(SWEEP_STEP_MS)
-                                i += step
-                            }
+                            val from = pageProgress.value
+                            val span = kotlin.math.abs(target - from).toInt()
+                            val duration = if (span <= 1) SWEEP_NEAR_MS else SWEEP_FAR_MS
+                            pageProgress.animateTo(
+                                targetValue = target.toFloat(),
+                                animationSpec = tween(duration, easing = LinearEasing)
+                            )
                             selectedIndex = target
                         }
                     } else {
-                        // 开关关闭时：直接跳转（保留 AnimatedContent 自带的单次过渡）。
-                        selectedIndex = target
+                        // 开关关闭：直接跳转（无扫过，保留 AnimatedContent 的单次过渡）。
+                        // snapTo 是 suspend，须在协程里调用。
+                        sweepJob = navScope.launch {
+                            pageProgress.snapTo(target.toFloat())
+                            selectedIndex = target
+                        }
                     }
                 },
                 // 玻璃模式下，胶囊导航栏本身由真·液态玻璃承托。
@@ -490,11 +494,15 @@ fun LabApp(
  */
 private const val SHOW_DYNAMIC_ISLAND = false
 /**
- * 胶囊切换「经过中间页」时，每档中间索引的停留时长（毫秒）。
- * 取值要「一闪而过但不突兀」——太短（<80ms）人眼来不及察觉扫过，
- * 太长（>250ms）则显得拖沓。160ms 是「电梯经过中间楼层」的从容体感。
+ * 胶囊切换「经过中间页」的动画时长（毫秒）。
+ *
+ * 与之前的逐档 delay+赋值不同，现在是一次连续动画（Animatable.animateTo），
+ * 中间页会连贯地掠过，而不是每层停一下。时长分两档：
+ *  - SWEEP_NEAR_MS：相邻页（跨 1 档），保持利落，不拖沓。
+ *  - SWEEP_FAR_MS：跨多档，略久一点让中间页有存在感，但不至于漫长。
  */
-private const val SWEEP_STEP_MS = 160L
+private const val SWEEP_NEAR_MS = 200
+private const val SWEEP_FAR_MS = 420
 
 /**
  * 展示在设置页「关于」里的版本号。
