@@ -108,6 +108,7 @@ fun SettingsPage(
     settings: AppSettingsState,
     onSettingsChange: (AppSettingsState) -> Unit,
     onClose: () -> Unit,
+    onOpenHiddenSettings: () -> Unit = {},
     appVersion: String = ""
 ) {
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
@@ -203,21 +204,6 @@ fun SettingsPage(
                     }
                 }
 
-                // ---- 隐藏设置 ----
-                item { SectionLabel("隐藏设置") }
-                item {
-                    SettingsCard {
-                        SwitchRow(
-                            title = "页面切换扫过动画",
-                            subtitle = "胶囊切换时快速经过中间页面（电梯式过渡）",
-                            checked = settings.sweepAnimation,
-                            onCheckedChange = { checked ->
-                                onSettingsChange(settings.copy(sweepAnimation = checked))
-                            }
-                        )
-                    }
-                }
-
                 // ---- 数据来源（只读） ----
                 item { SectionLabel("数据来源") }
                 item {
@@ -254,6 +240,17 @@ fun SettingsPage(
                         InfoRow(
                             title = "源码",
                             value = "github.com/oopnv70-lab/ui-lab"
+                        )
+                    }
+                }
+
+                // ---- 隐藏设置（入口） ----
+                item {
+                    SettingsCard {
+                        NavRow(
+                            title = "隐藏设置",
+                            subtitle = "实验性功能与开发者选项",
+                            onClick = onOpenHiddenSettings
                         )
                     }
                 }
@@ -486,6 +483,28 @@ private fun InfoRow(title: String, value: String) {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1
+        )
+    }
+}
+
+/** 可点击入口行：标题 + 副标题 + 右侧 chevron，用于跳转到二级页面。 */
+@Composable
+private fun NavRow(title: String, subtitle: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(modifier = Modifier.weight(1f)) {
+            RowTexts(title = title, subtitle = subtitle)
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+            text = "›",
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }

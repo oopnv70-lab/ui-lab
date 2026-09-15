@@ -62,6 +62,7 @@ import com.oopnv70.uilab.settings.AppSettingsState
 import com.oopnv70.uilab.settings.ThemeStyle
 import com.oopnv70.uilab.ui.components.FloatingPillNavigationBar
 import com.oopnv70.uilab.ui.components.NavItem
+import com.oopnv70.uilab.ui.settings.HiddenSettingsPage
 import com.oopnv70.uilab.ui.settings.SettingsPage
 import com.oopnv70.uilab.ui.weather.CitiesPage
 import com.oopnv70.uilab.ui.weather.CityItem
@@ -141,8 +142,13 @@ fun LabApp(
     var islandExpanded by remember { mutableStateOf(false) }
     // 设置页是否打开（同样是临时 UI 状态，不需要跨进程保存）
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
-
+    // 隐藏设置（二级页面）是否打开。它叠加在设置页之上。
+    var hiddenSettingsOpen by rememberSaveable { mutableStateOf(false) }
     // 设置是覆盖层；系统返回键优先关闭它，不能直接结束 Activity。
+    // 层级：隐藏设置 > 设置页 > 主页，返回键逐层退出。
+    BackHandler(enabled = hiddenSettingsOpen) {
+        hiddenSettingsOpen = false
+    }
     BackHandler(enabled = settingsOpen) {
         settingsOpen = false
     }
@@ -479,7 +485,27 @@ fun LabApp(
                 settings = appSettings,
                 onSettingsChange = onSettingsChange,
                 onClose = { settingsOpen = false },
+                onOpenHiddenSettings = { hiddenSettingsOpen = true },
                 appVersion = APP_VERSION
+            )
+        }
+        // ---------- 隐藏设置页（二级覆盖层，层级高于设置页） ----------
+        AnimatedVisibility(
+            visible = hiddenSettingsOpen,
+            enter = slideInVertically(
+                animationSpec = tween(280, easing = FastOutSlowInEasing),
+                initialOffsetY = { full -> full / 12 }
+            ) + fadeIn(animationSpec = tween(200)),
+            exit = slideOutVertically(
+                animationSpec = tween(220, easing = FastOutLinearInEasing),
+                targetOffsetY = { full -> full / 12 }
+            ) + fadeOut(animationSpec = tween(160)),
+            label = "hiddenSettingsPage"
+        ) {
+            HiddenSettingsPage(
+                settings = appSettings,
+                onSettingsChange = onSettingsChange,
+                onBack = { hiddenSettingsOpen = false }
             )
         }
     }
