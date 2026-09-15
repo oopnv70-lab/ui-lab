@@ -74,7 +74,7 @@ data class AppSettingsState(
     val dynamicColor: Boolean = false,
     val temperatureUnit: TemperatureUnit = TemperatureUnit.CELSIUS,
     val themeStyle: ThemeStyle = ThemeStyle.DEFAULT,
-    val sweepAnimation: Boolean = true
+    val sweepAnimation: Boolean = false
 )
 
 // ---- SharedPreferences 键名 ----
@@ -103,8 +103,9 @@ fun readAppSettings(context: Context): AppSettingsState {
         // 首次启动的机器（尤其低端）直接掉帧，用户会觉得 App 卡。
         // 想要的人自己去设置里打开 —— 这是有意的产品取舍。
         themeStyle = ThemeStyle.fromId(prefs.getString(KEY_THEME_STYLE, null)),
-        // 切换「经过中间页」动画默认开启：这是更自然的过渡体验。
-        sweepAnimation = prefs.getBoolean(KEY_SWEEP_ANIMATION, true)
+        // 切换「经过中间页」动画默认关闭：连续扫过在部分设备上仍有卡顿感，
+        // 想要的人自己去「隐藏设置」里打开。
+        sweepAnimation = prefs.getBoolean(KEY_SWEEP_ANIMATION, false)
     )
 }
 
