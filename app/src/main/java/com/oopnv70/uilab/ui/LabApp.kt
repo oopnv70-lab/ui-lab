@@ -486,10 +486,10 @@ fun LabApp(
 private const val SHOW_DYNAMIC_ISLAND = false
 /**
  * 胶囊切换「经过中间页」时，每档中间索引的停留时长（毫秒）。
- * 取值要「极短、一闪而过」——太短（<30ms）人眼来不及察觉扫过，
- * 太长（>120ms）则显得拖沓。70ms 是「电梯快速经过楼层」的体感。
+ * 取值要「一闪而过但不突兀」——太短（<80ms）人眼来不及察觉扫过，
+ * 太长（>250ms）则显得拖沓。160ms 是「电梯经过中间楼层」的从容体感。
  */
-private const val SWEEP_STEP_MS = 70L
+private const val SWEEP_STEP_MS = 160L
 
 /**
  * 展示在设置页「关于」里的版本号。
