@@ -73,7 +73,8 @@ data class AppSettingsState(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val dynamicColor: Boolean = false,
     val temperatureUnit: TemperatureUnit = TemperatureUnit.CELSIUS,
-    val themeStyle: ThemeStyle = ThemeStyle.DEFAULT
+    val themeStyle: ThemeStyle = ThemeStyle.DEFAULT,
+    val sweepAnimation: Boolean = true
 )
 
 // ---- SharedPreferences 键名 ----
@@ -81,6 +82,7 @@ private const val KEY_THEME_MODE = "theme_mode"
 private const val KEY_DYNAMIC_COLOR = "dynamic_color"
 private const val KEY_TEMPERATURE_UNIT = "temperature_unit"
 private const val KEY_THEME_STYLE = "theme_style"
+private const val KEY_SWEEP_ANIMATION = "sweep_animation"
 
 /**
  * 读取当前设置。
@@ -100,7 +102,9 @@ fun readAppSettings(context: Context): AppSettingsState {
         // ⚠️ 液态玻璃默认关闭。它是「重度渲染」选项，默认开启会让
         // 首次启动的机器（尤其低端）直接掉帧，用户会觉得 App 卡。
         // 想要的人自己去设置里打开 —— 这是有意的产品取舍。
-        themeStyle = ThemeStyle.fromId(prefs.getString(KEY_THEME_STYLE, null))
+        themeStyle = ThemeStyle.fromId(prefs.getString(KEY_THEME_STYLE, null)),
+        // 切换「经过中间页」动画默认开启：这是更自然的过渡体验。
+        sweepAnimation = prefs.getBoolean(KEY_SWEEP_ANIMATION, true)
     )
 }
 
@@ -131,6 +135,7 @@ fun persistAppSettings(context: Context, state: AppSettingsState) {
         .putBoolean(KEY_DYNAMIC_COLOR, state.dynamicColor)
         .putString(KEY_TEMPERATURE_UNIT, state.temperatureUnit.id)
         .putString(KEY_THEME_STYLE, state.themeStyle.id)
+        .putBoolean(KEY_SWEEP_ANIMATION, state.sweepAnimation)
         .apply()
 }
 

@@ -337,18 +337,23 @@ fun LabApp(
                 selectedIndex = selectedIndex,
                 onSelect = { target ->
                     sweepJob?.cancel()
-                    sweepJob = navScope.launch {
-                        val from = selectedIndex
-                        if (target == from) return@launch
-                        val step = if (target > from) 1 else -1
-                        var i = from + step
-                        // 逐档扫过中间索引；每档停留极短，但每次赋值都会
-                        // 触发 AnimatedContent 重新渲染，读到的是「当时最新」的数据。
-                        while (i != target) {
-                            selectedIndex = i
-                            delay(SWEEP_STEP_MS)
-                            i += step
+                    if (appSettings.sweepAnimation) {
+                        sweepJob = navScope.launch {
+                            val from = selectedIndex
+                            if (target == from) return@launch
+                            val step = if (target > from) 1 else -1
+                            var i = from + step
+                            // 逐档扫过中间索引；每档停留极短，但每次赋值都会
+                            // 触发 AnimatedContent 重新渲染，读到的是「当时最新」的数据。
+                            while (i != target) {
+                                selectedIndex = i
+                                delay(SWEEP_STEP_MS)
+                                i += step
+                            }
+                            selectedIndex = target
                         }
+                    } else {
+                        // 开关关闭时：直接跳转（保留 AnimatedContent 自带的单次过渡）。
                         selectedIndex = target
                     }
                 },

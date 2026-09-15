@@ -203,6 +203,21 @@ fun SettingsPage(
                     }
                 }
 
+                // ---- 隐藏设置 ----
+                item { SectionLabel("隐藏设置") }
+                item {
+                    SettingsCard {
+                        SwitchRow(
+                            title = "页面切换扫过动画",
+                            subtitle = "胶囊切换时快速经过中间页面（电梯式过渡）",
+                            checked = settings.sweepAnimation,
+                            onCheckedChange = { checked ->
+                                onSettingsChange(settings.copy(sweepAnimation = checked))
+                            }
+                        )
+                    }
+                }
+
                 // ---- 数据来源（只读） ----
                 item { SectionLabel("数据来源") }
                 item {
